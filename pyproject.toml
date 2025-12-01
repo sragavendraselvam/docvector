@@ -60,7 +60,14 @@ dependencies = [
     # CLI
     "typer>=0.9.0",
     "rich>=13.0.0",
+
+    # MCP (Model Context Protocol)
+    "mcp>=1.0.0",
 ]
+
+[project.scripts]
+docvector = "docvector.cli:app"
+docvector-mcp = "docvector.mcp.server:main"
 
 [project.optional-dependencies]
 dev = [

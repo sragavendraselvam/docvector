@@ -193,10 +193,10 @@ class QdrantVectorDB(BaseVectorDB):
         # Convert filter dict to Qdrant filter
         qdrant_filter = self._build_filter(filter) if filter else None
 
-        # Search
-        results = await self.client.search(
+        # Search using query_points (qdrant-client >= 1.6)
+        results = await self.client.query_points(
             collection_name=collection_name,
-            query_vector=query_vector,
+            query=query_vector,
             limit=limit,
             query_filter=qdrant_filter,
             score_threshold=score_threshold,
@@ -211,7 +211,7 @@ class QdrantVectorDB(BaseVectorDB):
                 score=result.score,
                 payload=result.payload or {},
             )
-            for result in results
+            for result in results.points
         ]
 
         logger.debug(
