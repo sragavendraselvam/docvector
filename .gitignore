@@ -147,3 +147,5 @@ cython_debug/
 Thumbs.db
 
 *.md
+*.txt
+!README.md
