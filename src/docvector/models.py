@@ -533,3 +533,504 @@ class ProofOfWorkChallenge(Base):
 
     def __repr__(self) -> str:
         return f"<ProofOfWorkChallenge(id={self.id}, action={self.action}, used={self.used})>"
+
+
+# =============================================================================
+# ENTERPRISE / MULTI-TENANCY MODELS
+# =============================================================================
+
+
+# Junction table for organization members
+org_members = Table(
+    "org_members",
+    Base.metadata,
+    Column(
+        "org_id",
+        PG_UUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column(
+        "user_id",
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column("role", String(50), nullable=False, server_default="member"),  # owner, admin, member, viewer
+    Column("invited_at", DateTime(timezone=True), server_default=func.now()),
+    Column("joined_at", DateTime(timezone=True), nullable=True),
+)
+
+
+class User(Base):
+    """User model - represents a human user or service account."""
+
+    __tablename__ = "users"
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+
+    # Identity
+    email = Column(String(255), nullable=False, unique=True)
+    username = Column(String(100), nullable=True, unique=True)
+    display_name = Column(String(255), nullable=True)
+    avatar_url = Column(String(2048), nullable=True)
+
+    # Authentication
+    password_hash = Column(String(255), nullable=True)  # Null for OAuth-only users
+    email_verified = Column(Boolean, nullable=False, server_default="false")
+    email_verified_at = Column(DateTime(timezone=True), nullable=True)
+
+    # Account type
+    account_type = Column(String(50), nullable=False, server_default="user")  # user, service, bot
+    is_active = Column(Boolean, nullable=False, server_default="true")
+    is_superuser = Column(Boolean, nullable=False, server_default="false")
+
+    # OAuth providers (linked accounts)
+    oauth_providers = Column(JSONB, nullable=False, server_default="{}")  # {github: {id, username}, google: {id, email}}
+
+    # Reputation and stats
+    reputation = Column(Integer, nullable=False, server_default="0")
+    questions_count = Column(Integer, nullable=False, server_default="0")
+    answers_count = Column(Integer, nullable=False, server_default="0")
+    accepted_answers_count = Column(Integer, nullable=False, server_default="0")
+
+    # Preferences
+    preferences = Column(JSONB, nullable=False, server_default="{}")
+
+    # Timestamps
+    last_login_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    # Relationships
+    organizations = relationship("Organization", secondary=org_members, back_populates="members")
+    api_keys = relationship("APIKey", back_populates="user", cascade="all, delete-orphan")
+    sessions = relationship("UserSession", back_populates="user", cascade="all, delete-orphan")
+
+    def __repr__(self) -> str:
+        return f"<User(id={self.id}, email={self.email}, username={self.username})>"
+
+
+class Organization(Base):
+    """Organization model - represents a company, team, or group."""
+
+    __tablename__ = "organizations"
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+
+    # Identity
+    slug = Column(String(100), nullable=False, unique=True)  # URL-safe identifier
+    name = Column(String(255), nullable=False)
+    description = Column(Text, nullable=True)
+    logo_url = Column(String(2048), nullable=True)
+    website_url = Column(String(2048), nullable=True)
+
+    # Owner
+    owner_id = Column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+    # Subscription and billing
+    plan = Column(String(50), nullable=False, server_default="free")  # free, starter, pro, enterprise
+    plan_expires_at = Column(DateTime(timezone=True), nullable=True)
+    stripe_customer_id = Column(String(255), nullable=True, unique=True)
+    stripe_subscription_id = Column(String(255), nullable=True)
+
+    # Quotas (based on plan)
+    max_members = Column(Integer, nullable=False, server_default="5")
+    max_api_keys = Column(Integer, nullable=False, server_default="3")
+    max_sources = Column(Integer, nullable=False, server_default="10")
+    max_documents = Column(Integer, nullable=False, server_default="1000")
+    max_queries_per_day = Column(Integer, nullable=False, server_default="1000")
+    max_storage_mb = Column(Integer, nullable=False, server_default="100")
+
+    # Usage tracking
+    current_members = Column(Integer, nullable=False, server_default="0")
+    current_sources = Column(Integer, nullable=False, server_default="0")
+    current_documents = Column(Integer, nullable=False, server_default="0")
+    current_storage_mb = Column(Integer, nullable=False, server_default="0")
+    queries_today = Column(Integer, nullable=False, server_default="0")
+    queries_reset_at = Column(DateTime(timezone=True), nullable=True)
+
+    # Settings
+    settings = Column(JSONB, nullable=False, server_default="{}")
+    is_active = Column(Boolean, nullable=False, server_default="true")
+
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    # Relationships
+    owner = relationship("User", foreign_keys=[owner_id])
+    members = relationship("User", secondary=org_members, back_populates="organizations")
+    api_keys = relationship("APIKey", back_populates="organization", cascade="all, delete-orphan")
+
+    def __repr__(self) -> str:
+        return f"<Organization(id={self.id}, slug={self.slug}, name={self.name}, plan={self.plan})>"
+
+
+class APIKey(Base):
+    """API Key model - for programmatic access to the API."""
+
+    __tablename__ = "api_keys"
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+
+    # Key identity
+    name = Column(String(255), nullable=False)  # User-defined name
+    key_prefix = Column(String(12), nullable=False)  # First 8 chars of key (for identification)
+    key_hash = Column(String(255), nullable=False, unique=True)  # Hashed full key
+
+    # Ownership (user OR organization, not both)
+    user_id = Column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    organization_id = Column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+
+    # Permissions
+    scopes = Column(PG_ARRAY(String), nullable=False, server_default="{}")  # read, write, admin
+    allowed_ips = Column(PG_ARRAY(String), nullable=True)  # IP whitelist (null = all)
+    allowed_origins = Column(PG_ARRAY(String), nullable=True)  # CORS origins
+
+    # Rate limiting
+    rate_limit_per_second = Column(Integer, nullable=False, server_default="5")
+    rate_limit_per_day = Column(Integer, nullable=True)  # Null = unlimited (or org quota)
+
+    # Status
+    is_active = Column(Boolean, nullable=False, server_default="true")
+    expires_at = Column(DateTime(timezone=True), nullable=True)  # Null = never expires
+
+    # Usage tracking
+    last_used_at = Column(DateTime(timezone=True), nullable=True)
+    last_used_ip = Column(String(45), nullable=True)  # IPv6 max length
+    total_requests = Column(Integer, nullable=False, server_default="0")
+    requests_today = Column(Integer, nullable=False, server_default="0")
+    requests_reset_at = Column(DateTime(timezone=True), nullable=True)
+
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    revoked_at = Column(DateTime(timezone=True), nullable=True)
+
+    # Relationships
+    user = relationship("User", back_populates="api_keys")
+    organization = relationship("Organization", back_populates="api_keys")
+
+    def __repr__(self) -> str:
+        return f"<APIKey(id={self.id}, name={self.name}, prefix={self.key_prefix})>"
+
+
+class UserSession(Base):
+    """User session model - for tracking authenticated sessions."""
+
+    __tablename__ = "user_sessions"
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+
+    # Session identity
+    user_id = Column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    token_hash = Column(String(255), nullable=False, unique=True)  # Hashed JWT/session token
+
+    # Session metadata
+    ip_address = Column(String(45), nullable=True)
+    user_agent = Column(String(512), nullable=True)
+    device_info = Column(JSONB, nullable=True)  # Parsed user agent
+
+    # Status
+    is_active = Column(Boolean, nullable=False, server_default="true")
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    last_activity_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    revoked_at = Column(DateTime(timezone=True), nullable=True)
+
+    # Relationships
+    user = relationship("User", back_populates="sessions")
+
+    def __repr__(self) -> str:
+        return f"<UserSession(id={self.id}, user_id={self.user_id}, active={self.is_active})>"
+
+
+class UsageEvent(Base):
+    """Usage event model - for tracking API usage and billing."""
+
+    __tablename__ = "usage_events"
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+
+    # Who
+    user_id = Column(PG_UUID(as_uuid=True), nullable=True)
+    organization_id = Column(PG_UUID(as_uuid=True), nullable=True)
+    api_key_id = Column(PG_UUID(as_uuid=True), nullable=True)
+
+    # What
+    event_type = Column(String(50), nullable=False)  # search, ingest, qa_submit, qa_answer
+    resource_type = Column(String(50), nullable=True)  # document, chunk, question, answer
+    resource_id = Column(PG_UUID(as_uuid=True), nullable=True)
+
+    # Metering
+    units = Column(Integer, nullable=False, server_default="1")  # e.g., tokens, documents, queries
+    unit_type = Column(String(50), nullable=False, server_default="request")  # request, token, byte, document
+
+    # Context
+    metadata_ = Column("metadata", JSONB, nullable=False, server_default="{}")
+    ip_address = Column(String(45), nullable=True)
+
+    # Timestamp
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    def __repr__(self) -> str:
+        return f"<UsageEvent(id={self.id}, type={self.event_type}, units={self.units})>"
+
+
+class AuditLog(Base):
+    """Audit log model - for tracking security-relevant actions."""
+
+    __tablename__ = "audit_logs"
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+
+    # Actor
+    actor_type = Column(String(50), nullable=False)  # user, api_key, system
+    actor_id = Column(String(255), nullable=False)
+    organization_id = Column(PG_UUID(as_uuid=True), nullable=True)
+
+    # Action
+    action = Column(String(100), nullable=False)  # create, update, delete, login, logout, etc.
+    resource_type = Column(String(50), nullable=True)
+    resource_id = Column(String(255), nullable=True)
+
+    # Details
+    changes = Column(JSONB, nullable=True)  # {field: {old: x, new: y}}
+    metadata_ = Column("metadata", JSONB, nullable=False, server_default="{}")
+
+    # Context
+    ip_address = Column(String(45), nullable=True)
+    user_agent = Column(String(512), nullable=True)
+
+    # Result
+    status = Column(String(50), nullable=False, server_default="success")  # success, failure, blocked
+    error_message = Column(Text, nullable=True)
+
+    # Timestamp
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    def __repr__(self) -> str:
+        return f"<AuditLog(id={self.id}, action={self.action}, actor={self.actor_type}:{self.actor_id})>"
+
+
+# =============================================================================
+# BILLING MODELS (Paddle)
+# =============================================================================
+
+
+class Subscription(Base):
+    """Subscription model - tracks Paddle subscriptions."""
+
+    __tablename__ = "subscriptions"
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+
+    # Paddle identifiers
+    paddle_subscription_id = Column(String(255), nullable=False, unique=True)
+    paddle_customer_id = Column(String(255), nullable=False)
+    paddle_price_id = Column(String(255), nullable=False)
+
+    # Organization link
+    organization_id = Column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+
+    # Plan details
+    plan = Column(String(50), nullable=False)  # starter, pro, enterprise
+    billing_cycle = Column(String(20), nullable=False)  # monthly, yearly
+    quantity = Column(Integer, nullable=False, server_default="1")
+
+    # Status
+    status = Column(String(50), nullable=False)  # active, past_due, canceled, paused, trialing
+    scheduled_change = Column(JSONB, nullable=True)  # Pending plan changes
+
+    # Dates
+    current_period_start = Column(DateTime(timezone=True), nullable=False)
+    current_period_end = Column(DateTime(timezone=True), nullable=False)
+    canceled_at = Column(DateTime(timezone=True), nullable=True)
+    paused_at = Column(DateTime(timezone=True), nullable=True)
+
+    # Trial
+    trial_start = Column(DateTime(timezone=True), nullable=True)
+    trial_end = Column(DateTime(timezone=True), nullable=True)
+
+    # Pricing (stored in cents/smallest currency unit)
+    unit_price = Column(Integer, nullable=False)  # Price per unit
+    currency = Column(String(3), nullable=False, server_default="USD")
+
+    # Metadata
+    metadata_ = Column("metadata", JSONB, nullable=False, server_default="{}")
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    # Relationships
+    organization = relationship("Organization", backref="subscriptions")
+    transactions = relationship("Transaction", back_populates="subscription", cascade="all, delete-orphan")
+
+    def __repr__(self) -> str:
+        return f"<Subscription(id={self.id}, paddle_id={self.paddle_subscription_id}, plan={self.plan}, status={self.status})>"
+
+
+class Transaction(Base):
+    """Transaction model - tracks Paddle transactions/invoices."""
+
+    __tablename__ = "transactions"
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+
+    # Paddle identifiers
+    paddle_transaction_id = Column(String(255), nullable=False, unique=True)
+    paddle_invoice_id = Column(String(255), nullable=True)
+    paddle_customer_id = Column(String(255), nullable=False)
+
+    # Links
+    subscription_id = Column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("subscriptions.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    organization_id = Column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+    # Transaction details
+    status = Column(String(50), nullable=False)  # completed, pending, failed, refunded
+    origin = Column(String(50), nullable=True)  # subscription_charge, subscription_update, etc.
+
+    # Amounts (stored in cents/smallest currency unit)
+    subtotal = Column(Integer, nullable=False)
+    tax = Column(Integer, nullable=False, server_default="0")
+    total = Column(Integer, nullable=False)
+    currency = Column(String(3), nullable=False, server_default="USD")
+
+    # Tax details
+    tax_rate = Column(Float, nullable=True)
+    tax_country = Column(String(2), nullable=True)  # ISO country code
+
+    # Payment details
+    payment_method_type = Column(String(50), nullable=True)  # card, paypal, apple_pay, google_pay
+    card_brand = Column(String(50), nullable=True)  # visa, mastercard, amex
+    card_last_four = Column(String(4), nullable=True)
+
+    # Invoice
+    invoice_number = Column(String(100), nullable=True)
+    invoice_url = Column(String(2048), nullable=True)  # Paddle-hosted invoice URL
+
+    # Line items
+    items = Column(JSONB, nullable=False, server_default="[]")
+
+    # Billing period this transaction covers
+    billing_period_start = Column(DateTime(timezone=True), nullable=True)
+    billing_period_end = Column(DateTime(timezone=True), nullable=True)
+
+    # Dates
+    billed_at = Column(DateTime(timezone=True), nullable=True)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+
+    # Metadata
+    metadata_ = Column("metadata", JSONB, nullable=False, server_default="{}")
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    # Relationships
+    subscription = relationship("Subscription", back_populates="transactions")
+    organization = relationship("Organization", backref="transactions")
+
+    def __repr__(self) -> str:
+        return f"<Transaction(id={self.id}, paddle_id={self.paddle_transaction_id}, total={self.total}, status={self.status})>"
+
+
+class PaddleCustomer(Base):
+    """Paddle customer model - links Paddle customers to organizations."""
+
+    __tablename__ = "paddle_customers"
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+
+    # Paddle identifiers
+    paddle_customer_id = Column(String(255), nullable=False, unique=True)
+
+    # Organization link
+    organization_id = Column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+    )
+
+    # Customer details (synced from Paddle)
+    email = Column(String(255), nullable=False)
+    name = Column(String(255), nullable=True)
+
+    # Marketing consent
+    marketing_consent = Column(Boolean, nullable=False, server_default="false")
+
+    # Address (for tax calculation)
+    country_code = Column(String(2), nullable=True)  # ISO country code
+    postal_code = Column(String(20), nullable=True)
+    region = Column(String(100), nullable=True)
+
+    # Metadata
+    metadata_ = Column("metadata", JSONB, nullable=False, server_default="{}")
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    # Relationships
+    organization = relationship("Organization", backref="paddle_customer")
+
+    def __repr__(self) -> str:
+        return f"<PaddleCustomer(id={self.id}, paddle_id={self.paddle_customer_id}, email={self.email})>"
+
+
+class PaddleWebhookEvent(Base):
+    """Paddle webhook event log - for idempotency and debugging."""
+
+    __tablename__ = "paddle_webhook_events"
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+
+    # Event identifiers
+    paddle_event_id = Column(String(255), nullable=False, unique=True)
+    event_type = Column(String(100), nullable=False)  # subscription.created, transaction.completed, etc.
+
+    # Related resources
+    paddle_customer_id = Column(String(255), nullable=True)
+    paddle_subscription_id = Column(String(255), nullable=True)
+    paddle_transaction_id = Column(String(255), nullable=True)
+
+    # Processing status
+    status = Column(String(50), nullable=False, server_default="pending")  # pending, processed, failed, ignored
+    error_message = Column(Text, nullable=True)
+    processed_at = Column(DateTime(timezone=True), nullable=True)
+
+    # Raw payload
+    payload = Column(JSONB, nullable=False)
+
+    # Timestamps
+    occurred_at = Column(DateTime(timezone=True), nullable=False)  # When Paddle created the event
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    def __repr__(self) -> str:
+        return f"<PaddleWebhookEvent(id={self.id}, type={self.event_type}, status={self.status})>"

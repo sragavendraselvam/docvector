@@ -3,6 +3,11 @@
 This server provides documentation search capabilities to AI code editors
 through the Model Context Protocol (MCP).
 
+Modes:
+- local: All data stored locally, no cloud connectivity (air-gapped, private)
+- cloud: Connect to DocVector Cloud for community Q&A corpus
+- hybrid: Local docs + cloud Q&A (recommended - best of both worlds)
+
 Tools:
 - resolve-library-id: Find the correct library ID for a library name
 - get-library-docs: Get documentation for a specific library
@@ -13,16 +18,25 @@ Tools:
 - search-issues: Search bug reports and issues
 - submit-issue: Submit a new issue/bug report
 - submit-solution: Submit a solution to an issue
+- get-reputation: Get reputation score and rate limit status (cloud/hybrid only)
 
 Usage:
     # Run with stdio transport (for Claude Desktop, Cursor, etc.)
     python -m docvector.mcp.server
 
+    # Run with specific mode
+    python -m docvector.mcp.server --mode local
+    python -m docvector.mcp.server --mode cloud --api-key xxx
+    python -m docvector.mcp.server --mode hybrid --api-key xxx
+
     # Or use the CLI entry point
-    docvector-mcp
+    docvector mcp
+    docvector mcp --mode hybrid --api-key xxx
 """
 
 import asyncio
+from dataclasses import dataclass
+from enum import Enum
 from typing import Optional
 
 from mcp.server.fastmcp import FastMCP
@@ -37,7 +51,65 @@ from docvector.utils.token_utils import TokenLimiter
 
 logger = get_logger(__name__)
 
-# Initialize the MCP server
+
+class MCPMode(str, Enum):
+    """MCP Server operating modes."""
+    LOCAL = "local"      # Local only, fully air-gapped
+    CLOUD = "cloud"      # Cloud Q&A corpus, cloud submissions
+    HYBRID = "hybrid"    # Local docs + cloud Q&A
+
+
+@dataclass
+class MCPConfig:
+    """MCP Server configuration."""
+    mode: MCPMode = MCPMode.LOCAL
+    cloud_api_url: Optional[str] = None
+    cloud_api_key: Optional[str] = None
+
+    @property
+    def is_cloud_enabled(self) -> bool:
+        """Check if cloud features are enabled."""
+        return self.mode in (MCPMode.CLOUD, MCPMode.HYBRID)
+
+    @property
+    def is_local_enabled(self) -> bool:
+        """Check if local features are enabled."""
+        return self.mode in (MCPMode.LOCAL, MCPMode.HYBRID)
+
+
+# Global config (set during server startup)
+_mcp_config: MCPConfig = MCPConfig()
+
+
+def set_mcp_config(mode: str, api_url: Optional[str] = None, api_key: Optional[str] = None):
+    """Set the MCP server configuration."""
+    global _mcp_config
+    _mcp_config = MCPConfig(
+        mode=MCPMode(mode),
+        cloud_api_url=api_url or settings.cloud_api_url,
+        cloud_api_key=api_key or settings.cloud_api_key,
+    )
+    logger.info(f"MCP server configured", mode=mode, cloud_enabled=_mcp_config.is_cloud_enabled)
+
+
+def get_mcp_config() -> MCPConfig:
+    """Get the current MCP configuration."""
+    return _mcp_config
+
+
+# Initialize the MCP server with mode-aware instructions
+def get_server_instructions() -> str:
+    """Get mode-specific server instructions."""
+    base = "DocVector provides documentation search capabilities. Use resolve_library_id to find library IDs, get_library_docs to fetch docs for a specific library, and search_docs to search across all documentation."
+
+    if _mcp_config.mode == MCPMode.LOCAL:
+        return base + " Running in LOCAL mode - all data stays on your machine, fully private."
+    elif _mcp_config.mode == MCPMode.CLOUD:
+        return base + " Running in CLOUD mode - connected to DocVector Cloud for community Q&A. Use get_reputation to check your contribution score."
+    else:
+        return base + " Running in HYBRID mode - local docs + cloud Q&A. Best of both worlds. Use get_reputation to check your contribution score."
+
+
 mcp = FastMCP(
     name="docvector",
     instructions="DocVector provides documentation search capabilities. Use resolve_library_id to find library IDs, get_library_docs to fetch docs for a specific library, and search_docs to search across all documentation.",
@@ -743,20 +815,309 @@ async def submit_solution(
             return {"error": str(e)}
 
 
+# ============ Reputation Tool ============
+
+
+@mcp.tool()
+async def get_reputation(
+    agent_id: str,
+) -> dict:
+    """Get reputation score and rate limit status for an agent.
+
+    Returns your contribution score, accepted answers/solutions, and rate limit bonus.
+    Only available in cloud or hybrid mode.
+
+    Args:
+        agent_id: Your agent/user identifier
+
+    Returns:
+        A dictionary containing:
+        - agentId: Your identifier
+        - mode: Current MCP mode (local/cloud/hybrid)
+        - reputation: Your reputation score (cloud/hybrid only)
+        - stats: Contribution statistics
+        - rateLimitBonus: Extra rate limit based on reputation
+    """
+    if not agent_id:
+        return {"error": "agent_id is required"}
+
+    config = get_mcp_config()
+
+    # In local mode, reputation is not tracked in the cloud
+    if config.mode == MCPMode.LOCAL:
+        # Return local stats only
+        async with get_db_session() as db:
+            from sqlalchemy import select, func
+            from docvector.models import Question, Answer, Vote
+
+            # Count local contributions
+            q_count = await db.scalar(
+                select(func.count(Question.id)).where(Question.author_id == agent_id)
+            )
+            a_count = await db.scalar(
+                select(func.count(Answer.id)).where(Answer.author_id == agent_id)
+            )
+            accepted_count = await db.scalar(
+                select(func.count(Answer.id)).where(
+                    Answer.author_id == agent_id,
+                    Answer.is_accepted == True
+                )
+            )
+
+            return {
+                "agentId": agent_id,
+                "mode": "local",
+                "reputation": None,
+                "message": "Reputation tracking requires cloud or hybrid mode. Running locally - all data stays private.",
+                "localStats": {
+                    "questionsAsked": q_count or 0,
+                    "answersGiven": a_count or 0,
+                    "acceptedAnswers": accepted_count or 0,
+                },
+                "rateLimitBonus": 0,
+                "hint": "Connect to DocVector Cloud with --mode hybrid to earn reputation and rate limit bonuses.",
+            }
+
+    # In cloud/hybrid mode, calculate reputation
+    async with get_db_session() as db:
+        from sqlalchemy import select, func
+        from docvector.models import Question, Answer, Vote, Solution, Issue
+
+        # Count contributions
+        questions_asked = await db.scalar(
+            select(func.count(Question.id)).where(Question.author_id == agent_id)
+        ) or 0
+        answers_given = await db.scalar(
+            select(func.count(Answer.id)).where(Answer.author_id == agent_id)
+        ) or 0
+        accepted_answers = await db.scalar(
+            select(func.count(Answer.id)).where(
+                Answer.author_id == agent_id,
+                Answer.is_accepted == True
+            )
+        ) or 0
+        issues_reported = await db.scalar(
+            select(func.count(Issue.id)).where(Issue.author_id == agent_id)
+        ) or 0
+        solutions_given = await db.scalar(
+            select(func.count(Solution.id)).where(Solution.author_id == agent_id)
+        ) or 0
+        accepted_solutions = await db.scalar(
+            select(func.count(Solution.id)).where(
+                Solution.author_id == agent_id,
+                Solution.is_accepted == True
+            )
+        ) or 0
+
+        # Get vote scores on agent's content
+        answer_votes = await db.scalar(
+            select(func.coalesce(func.sum(Answer.vote_score), 0)).where(Answer.author_id == agent_id)
+        ) or 0
+        solution_votes = await db.scalar(
+            select(func.coalesce(func.sum(Solution.vote_score), 0)).where(Solution.author_id == agent_id)
+        ) or 0
+
+        # Calculate reputation score
+        # Points: question=1, answer=2, accepted_answer=15, issue=1, solution=2, accepted_solution=15
+        # Votes: answer_votes * 1, solution_votes * 1
+        reputation = (
+            questions_asked * 1 +
+            answers_given * 2 +
+            accepted_answers * 15 +
+            issues_reported * 1 +
+            solutions_given * 2 +
+            accepted_solutions * 15 +
+            answer_votes +
+            solution_votes
+        )
+
+        # Calculate rate limit bonus (1 extra req/sec per 100 reputation, max +10)
+        rate_limit_bonus = min(10, reputation // 100)
+
+        # Determine tier
+        if reputation >= 1000:
+            tier = "gold"
+            tier_name = "Gold Contributor"
+        elif reputation >= 500:
+            tier = "silver"
+            tier_name = "Silver Contributor"
+        elif reputation >= 100:
+            tier = "bronze"
+            tier_name = "Bronze Contributor"
+        else:
+            tier = "member"
+            tier_name = "Community Member"
+
+        return {
+            "agentId": agent_id,
+            "mode": config.mode.value,
+            "reputation": reputation,
+            "tier": tier,
+            "tierName": tier_name,
+            "stats": {
+                "questionsAsked": questions_asked,
+                "answersGiven": answers_given,
+                "acceptedAnswers": accepted_answers,
+                "issuesReported": issues_reported,
+                "solutionsGiven": solutions_given,
+                "acceptedSolutions": accepted_solutions,
+                "totalVotesReceived": answer_votes + solution_votes,
+            },
+            "rateLimitBonus": rate_limit_bonus,
+            "baseRateLimit": 5,  # Default 5 req/sec
+            "effectiveRateLimit": 5 + rate_limit_bonus,
+        }
+
+
+@mcp.tool()
+async def get_server_status() -> dict:
+    """Get DocVector MCP server status and configuration.
+
+    Returns information about the current server mode, connectivity,
+    and available features.
+
+    Returns:
+        A dictionary containing:
+        - mode: Current operating mode (local/cloud/hybrid)
+        - features: Available features based on mode
+        - stats: Index statistics
+    """
+    config = get_mcp_config()
+
+    async with get_db_session() as db:
+        from sqlalchemy import select, func
+        from docvector.models import Library, Question, Issue
+
+        # Get local stats
+        library_count = await db.scalar(select(func.count(Library.id))) or 0
+        question_count = await db.scalar(select(func.count(Question.id))) or 0
+        issue_count = await db.scalar(select(func.count(Issue.id))) or 0
+
+    features = {
+        "searchDocs": True,
+        "searchQuestions": True,
+        "searchIssues": True,
+        "submitQuestion": True,
+        "submitAnswer": True,
+        "submitIssue": True,
+        "submitSolution": True,
+        "getReputation": config.is_cloud_enabled,
+        "cloudQA": config.is_cloud_enabled,
+        "localPrivacy": config.is_local_enabled,
+    }
+
+    return {
+        "server": "docvector-mcp",
+        "version": settings.app_version,
+        "mode": config.mode.value,
+        "modeDescription": {
+            "local": "Fully private, air-gapped. All data stays on your machine.",
+            "cloud": "Connected to DocVector Cloud for community Q&A corpus.",
+            "hybrid": "Local docs + cloud Q&A. Best of both worlds.",
+        }[config.mode.value],
+        "cloudConnected": config.is_cloud_enabled and config.cloud_api_key is not None,
+        "features": features,
+        "localStats": {
+            "libraries": library_count,
+            "questions": question_count,
+            "issues": issue_count,
+        },
+    }
+
+
 def main():
-    """Run the MCP server with stdio transport."""
+    """Run the MCP server with configurable mode and transport."""
+    import argparse
     import sys
 
-    # Determine transport mode
-    transport = "stdio"
+    parser = argparse.ArgumentParser(
+        description="DocVector MCP Server - Documentation search for AI agents",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Modes:
+  local   - All data stored locally, no cloud connectivity (default)
+  cloud   - Connect to DocVector Cloud for community Q&A corpus
+  hybrid  - Local docs + cloud Q&A (recommended)
 
-    if len(sys.argv) > 1:
-        if sys.argv[1] == "--http":
-            transport = "streamable-http"
-        elif sys.argv[1] == "--sse":
-            transport = "sse"
+Examples:
+  # Run with stdio transport (for Claude Desktop)
+  python -m docvector.mcp.server
 
-    logger.info(f"Starting DocVector MCP server with {transport} transport")
+  # Run in hybrid mode with API key
+  python -m docvector.mcp.server --mode hybrid --api-key YOUR_KEY
+
+  # Run HTTP server for web clients
+  python -m docvector.mcp.server --transport http --port 8001
+        """
+    )
+
+    parser.add_argument(
+        "--mode", "-m",
+        choices=["local", "cloud", "hybrid"],
+        default=settings.mcp_mode,
+        help="Operating mode (default: local)"
+    )
+    parser.add_argument(
+        "--api-key", "-k",
+        default=settings.cloud_api_key,
+        help="DocVector Cloud API key (required for cloud/hybrid mode)"
+    )
+    parser.add_argument(
+        "--api-url",
+        default=settings.cloud_api_url,
+        help="DocVector Cloud API URL"
+    )
+    parser.add_argument(
+        "--transport", "-t",
+        choices=["stdio", "http", "sse"],
+        default="stdio",
+        help="Transport protocol (default: stdio)"
+    )
+    parser.add_argument(
+        "--port", "-p",
+        type=int,
+        default=8001,
+        help="Port for HTTP/SSE transport (default: 8001)"
+    )
+
+    args = parser.parse_args()
+
+    # Validate cloud mode requirements
+    if args.mode in ("cloud", "hybrid") and not args.api_key:
+        logger.warning(
+            "Cloud/hybrid mode without API key - cloud features will be limited. "
+            "Set DOCVECTOR_CLOUD_API_KEY or use --api-key"
+        )
+
+    # Configure MCP mode
+    set_mcp_config(
+        mode=args.mode,
+        api_url=args.api_url,
+        api_key=args.api_key,
+    )
+
+    # Map transport names
+    transport_map = {
+        "stdio": "stdio",
+        "http": "streamable-http",
+        "sse": "sse",
+    }
+    transport = transport_map[args.transport]
+
+    logger.info(
+        f"Starting DocVector MCP server",
+        mode=args.mode,
+        transport=transport,
+        cloud_enabled=get_mcp_config().is_cloud_enabled,
+    )
+
+    # Print startup info to stderr (so it doesn't interfere with stdio transport)
+    if args.transport == "stdio":
+        import sys
+        print(f"DocVector MCP Server v{settings.app_version}", file=sys.stderr)
+        print(f"Mode: {args.mode}", file=sys.stderr)
+        print(f"Transport: {transport}", file=sys.stderr)
+        print("Ready for connections...", file=sys.stderr)
 
     # Run the server
     mcp.run(transport=transport)
