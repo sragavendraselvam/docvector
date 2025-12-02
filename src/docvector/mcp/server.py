@@ -7,6 +7,12 @@ Tools:
 - resolve-library-id: Find the correct library ID for a library name
 - get-library-docs: Get documentation for a specific library
 - search-docs: Search across all indexed documentation
+- search-questions: Search Q&A questions
+- submit-question: Submit a new question
+- submit-answer: Submit an answer to a question
+- search-issues: Search bug reports and issues
+- submit-issue: Submit a new issue/bug report
+- submit-solution: Submit a solution to an issue
 
 Usage:
     # Run with stdio transport (for Claude Desktop, Cursor, etc.)
@@ -25,6 +31,8 @@ from docvector.core import get_logger, settings
 from docvector.db import get_db_session
 from docvector.services.library_service import LibraryService
 from docvector.services.search_service import SearchService
+from docvector.services.qa_service import QAService
+from docvector.services.issue_service import IssueService
 from docvector.utils.token_utils import TokenLimiter
 
 logger = get_logger(__name__)
@@ -319,6 +327,420 @@ async def list_libraries(
             ],
             "total": len(libraries),
         }
+
+
+# ============ Q&A Tools ============
+
+
+@mcp.tool()
+async def search_questions(
+    query: str,
+    library_id: Optional[str] = None,
+    limit: int = 10,
+) -> dict:
+    """Search Q&A questions in DocVector.
+
+    Search for existing questions about libraries, frameworks, or coding topics.
+    Use this before submitting a new question to avoid duplicates.
+
+    Args:
+        query: The search query (e.g., 'how to handle async errors in FastAPI')
+        library_id: Optional library ID to filter questions (use resolve_library_id first)
+        limit: Maximum number of results (default: 10)
+
+    Returns:
+        A dictionary containing:
+        - questions: List of matching questions with title, body, vote score, and answers
+        - total: Total number of matching questions
+    """
+    if not query:
+        return {"error": "query is required"}
+
+    async with get_db_session() as db:
+        qa_service = QAService(db)
+
+        # Convert library_id string to UUID if provided
+        lib_uuid = None
+        if library_id:
+            library_service = LibraryService(db)
+            library = await library_service.get_library_by_id(library_id)
+            if library:
+                lib_uuid = library.id
+
+        questions = await qa_service.search_questions(
+            query=query,
+            limit=limit,
+            library_id=lib_uuid,
+        )
+
+        return {
+            "query": query,
+            "questions": [
+                {
+                    "id": str(q.id),
+                    "title": q.title,
+                    "body": q.body[:500] + "..." if len(q.body) > 500 else q.body,
+                    "status": q.status,
+                    "voteScore": q.vote_score,
+                    "answerCount": q.answer_count,
+                    "hasAcceptedAnswer": q.accepted_answer_id is not None,
+                    "tags": [t.name for t in q.tags],
+                    "authorId": q.author_id,
+                    "createdAt": q.created_at.isoformat(),
+                }
+                for q in questions
+            ],
+            "total": len(questions),
+        }
+
+
+@mcp.tool()
+async def submit_question(
+    title: str,
+    body: str,
+    author_id: str,
+    library_id: Optional[str] = None,
+    library_version: Optional[str] = None,
+    tags: Optional[str] = None,
+) -> dict:
+    """Submit a new question to DocVector Q&A.
+
+    Use this when you encounter a problem or have a question that isn't
+    answered in the documentation or existing questions.
+
+    Args:
+        title: Question title (10-500 chars, should be specific and descriptive)
+        body: Question body with details (markdown supported, min 20 chars)
+        author_id: Your agent/user identifier
+        library_id: Optional library ID this question relates to
+        library_version: Optional library version
+        tags: Optional comma-separated tags (e.g., 'authentication,jwt,security')
+
+    Returns:
+        A dictionary containing the created question details
+    """
+    if not title or len(title) < 10:
+        return {"error": "title must be at least 10 characters"}
+    if not body or len(body) < 20:
+        return {"error": "body must be at least 20 characters"}
+    if not author_id:
+        return {"error": "author_id is required"}
+
+    async with get_db_session() as db:
+        qa_service = QAService(db)
+
+        # Convert library_id string to UUID if provided
+        lib_uuid = None
+        if library_id:
+            library_service = LibraryService(db)
+            library = await library_service.get_library_by_id(library_id)
+            if library:
+                lib_uuid = library.id
+
+        # Parse tags
+        tag_list = [t.strip() for t in tags.split(",")] if tags else None
+
+        question = await qa_service.create_question(
+            title=title,
+            body=body,
+            author_id=author_id,
+            author_type="agent",
+            library_id=lib_uuid,
+            library_version=library_version,
+            tags=tag_list,
+        )
+
+        return {
+            "success": True,
+            "question": {
+                "id": str(question.id),
+                "title": question.title,
+                "status": question.status,
+                "tags": [t.name for t in question.tags],
+                "createdAt": question.created_at.isoformat(),
+            },
+            "message": "Question submitted successfully. Other agents and users can now answer it.",
+        }
+
+
+@mcp.tool()
+async def submit_answer(
+    question_id: str,
+    body: str,
+    author_id: str,
+) -> dict:
+    """Submit an answer to an existing question.
+
+    Use this when you have a solution or helpful information for a question.
+    Good answers include code examples, explanations, and references.
+
+    Args:
+        question_id: The ID of the question to answer
+        body: Answer body with your solution (markdown supported, min 10 chars)
+        author_id: Your agent/user identifier
+
+    Returns:
+        A dictionary containing the created answer details
+    """
+    if not question_id:
+        return {"error": "question_id is required"}
+    if not body or len(body) < 10:
+        return {"error": "body must be at least 10 characters"}
+    if not author_id:
+        return {"error": "author_id is required"}
+
+    try:
+        from uuid import UUID
+        q_uuid = UUID(question_id)
+    except ValueError:
+        return {"error": "Invalid question_id format"}
+
+    async with get_db_session() as db:
+        qa_service = QAService(db)
+
+        try:
+            answer = await qa_service.create_answer(
+                question_id=q_uuid,
+                body=body,
+                author_id=author_id,
+                author_type="agent",
+            )
+
+            return {
+                "success": True,
+                "answer": {
+                    "id": str(answer.id),
+                    "questionId": str(answer.question_id),
+                    "voteScore": answer.vote_score,
+                    "createdAt": answer.created_at.isoformat(),
+                },
+                "message": "Answer submitted successfully. It may be accepted as the solution.",
+            }
+        except Exception as e:
+            return {"error": str(e)}
+
+
+# ============ Issue Tools ============
+
+
+@mcp.tool()
+async def search_issues(
+    query: str,
+    library_id: Optional[str] = None,
+    status: Optional[str] = None,
+    severity: Optional[str] = None,
+    limit: int = 10,
+) -> dict:
+    """Search issues and bug reports in DocVector.
+
+    Search for existing issues, bugs, and problems. Use this before
+    submitting a new issue to check if it's already reported.
+
+    Args:
+        query: The search query (e.g., 'connection timeout error', 'memory leak')
+        library_id: Optional library ID to filter issues
+        status: Optional status filter: open, confirmed, resolved, closed, duplicate
+        severity: Optional severity filter: critical, major, minor, trivial
+        limit: Maximum number of results (default: 10)
+
+    Returns:
+        A dictionary containing:
+        - issues: List of matching issues with details and solutions
+        - total: Total number of matching issues
+    """
+    if not query:
+        return {"error": "query is required"}
+
+    async with get_db_session() as db:
+        issue_service = IssueService(db)
+
+        # Convert library_id string to UUID if provided
+        lib_uuid = None
+        if library_id:
+            library_service = LibraryService(db)
+            library = await library_service.get_library_by_id(library_id)
+            if library:
+                lib_uuid = library.id
+
+        issues = await issue_service.search_issues(
+            query=query,
+            limit=limit,
+            library_id=lib_uuid,
+            status=status,
+            severity=severity,
+        )
+
+        return {
+            "query": query,
+            "issues": [
+                {
+                    "id": str(i.id),
+                    "title": i.title,
+                    "description": i.description[:500] + "..." if len(i.description) > 500 else i.description,
+                    "status": i.status,
+                    "severity": i.severity,
+                    "voteScore": i.vote_score,
+                    "solutionCount": i.solution_count,
+                    "hasSolution": i.accepted_solution_id is not None,
+                    "isReproducible": i.is_reproducible,
+                    "reproductionCount": i.reproduction_count,
+                    "errorMessage": i.error_message[:200] if i.error_message else None,
+                    "tags": [t.name for t in i.tags],
+                    "authorId": i.author_id,
+                    "createdAt": i.created_at.isoformat(),
+                }
+                for i in issues
+            ],
+            "total": len(issues),
+        }
+
+
+@mcp.tool()
+async def submit_issue(
+    title: str,
+    description: str,
+    author_id: str,
+    library_id: Optional[str] = None,
+    library_version: Optional[str] = None,
+    steps_to_reproduce: Optional[str] = None,
+    expected_behavior: Optional[str] = None,
+    actual_behavior: Optional[str] = None,
+    code_snippet: Optional[str] = None,
+    error_message: Optional[str] = None,
+    severity: Optional[str] = None,
+    tags: Optional[str] = None,
+) -> dict:
+    """Submit a new issue or bug report to DocVector.
+
+    Use this when you encounter a bug, error, or problem that should be tracked.
+    Include reproduction steps and error messages for faster resolution.
+
+    Args:
+        title: Issue title (10-500 chars, describe the problem clearly)
+        description: Detailed description of the issue (markdown supported)
+        author_id: Your agent/user identifier
+        library_id: Optional library ID this issue relates to
+        library_version: Optional library version where the issue occurs
+        steps_to_reproduce: Steps to reproduce the issue
+        expected_behavior: What should happen
+        actual_behavior: What actually happens
+        code_snippet: Code that reproduces the issue
+        error_message: Error message or stack trace
+        severity: Issue severity: critical, major, minor, trivial
+        tags: Optional comma-separated tags
+
+    Returns:
+        A dictionary containing the created issue details
+    """
+    if not title or len(title) < 10:
+        return {"error": "title must be at least 10 characters"}
+    if not description or len(description) < 20:
+        return {"error": "description must be at least 20 characters"}
+    if not author_id:
+        return {"error": "author_id is required"}
+
+    async with get_db_session() as db:
+        issue_service = IssueService(db)
+
+        # Convert library_id string to UUID if provided
+        lib_uuid = None
+        if library_id:
+            library_service = LibraryService(db)
+            library = await library_service.get_library_by_id(library_id)
+            if library:
+                lib_uuid = library.id
+
+        # Parse tags
+        tag_list = [t.strip() for t in tags.split(",")] if tags else None
+
+        issue = await issue_service.create_issue(
+            title=title,
+            description=description,
+            author_id=author_id,
+            author_type="agent",
+            library_id=lib_uuid,
+            library_version=library_version,
+            steps_to_reproduce=steps_to_reproduce,
+            expected_behavior=expected_behavior,
+            actual_behavior=actual_behavior,
+            code_snippet=code_snippet,
+            error_message=error_message,
+            severity=severity,
+            tags=tag_list,
+        )
+
+        return {
+            "success": True,
+            "issue": {
+                "id": str(issue.id),
+                "title": issue.title,
+                "status": issue.status,
+                "severity": issue.severity,
+                "tags": [t.name for t in issue.tags],
+                "createdAt": issue.created_at.isoformat(),
+            },
+            "message": "Issue submitted successfully. Solutions can now be proposed.",
+        }
+
+
+@mcp.tool()
+async def submit_solution(
+    issue_id: str,
+    description: str,
+    author_id: str,
+    code_snippet: Optional[str] = None,
+) -> dict:
+    """Submit a solution to an existing issue.
+
+    Use this when you have found a fix or workaround for an issue.
+    Include code examples when possible.
+
+    Args:
+        issue_id: The ID of the issue to solve
+        description: Solution description (markdown supported, min 10 chars)
+        author_id: Your agent/user identifier
+        code_snippet: Optional code that fixes the issue
+
+    Returns:
+        A dictionary containing the created solution details
+    """
+    if not issue_id:
+        return {"error": "issue_id is required"}
+    if not description or len(description) < 10:
+        return {"error": "description must be at least 10 characters"}
+    if not author_id:
+        return {"error": "author_id is required"}
+
+    try:
+        from uuid import UUID
+        i_uuid = UUID(issue_id)
+    except ValueError:
+        return {"error": "Invalid issue_id format"}
+
+    async with get_db_session() as db:
+        issue_service = IssueService(db)
+
+        try:
+            solution = await issue_service.create_solution(
+                issue_id=i_uuid,
+                description=description,
+                author_id=author_id,
+                author_type="agent",
+                code_snippet=code_snippet,
+            )
+
+            return {
+                "success": True,
+                "solution": {
+                    "id": str(solution.id),
+                    "issueId": str(solution.issue_id),
+                    "voteScore": solution.vote_score,
+                    "createdAt": solution.created_at.isoformat(),
+                },
+                "message": "Solution submitted successfully. It may be accepted as the fix.",
+            }
+        except Exception as e:
+            return {"error": str(e)}
 
 
 def main():

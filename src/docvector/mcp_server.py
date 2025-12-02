@@ -177,7 +177,7 @@ class MCPServer:
         if not library_name:
             return {"error": "libraryName is required"}
 
-        async for db in get_db():
+        async with get_db() as db:
             library_service = LibraryService(db)
             library_id = await library_service.resolve_library_id(library_name)
 
@@ -228,33 +228,17 @@ class MCPServer:
 
         query = " ".join(query_parts)
 
-        # Build filters
-        filters = {}
+        # Build filters - use 'library' field which is the string name in Qdrant
+        filters = {"library": library_id}
 
-        async for db in get_db():
-            # Get library to find associated source
-            library_service = LibraryService(db)
-            library = await library_service.get_library_by_id(library_id)
+        if version:
+            filters["version"] = version
 
-            if not library:
-                return {"error": f"Library not found: {library_id}"}
+        # Get search service (standalone mode without DB session)
+        search_service = SearchService()
+        await search_service.initialize()
 
-            # Get search service
-            search_service = SearchService(
-                db=db,
-                vector_db=None,  # Will be initialized by search service
-                embedder=None,  # Will be initialized by search service
-            )
-
-            # Add filters
-            filters["library_id"] = str(library.id)
-
-            if version:
-                filters["version"] = version
-
-            if topic:
-                filters["topics"] = topic
-
+        try:
             # Perform search
             results = await search_service.search(
                 query=query,
@@ -263,13 +247,13 @@ class MCPServer:
                 filters=filters,
             )
 
-            # Limit by tokens
+            # Limit by tokens - results are dicts from search service
             limited_results = self.token_limiter.limit_results_to_tokens(
                 [
                     {
-                        "content": r.content,
-                        "metadata": r.metadata,
-                        "score": r.score,
+                        "content": r.get("content", ""),
+                        "metadata": {k: v for k, v in r.items() if k not in ["content", "score"]},
+                        "score": r.get("score", 0),
                     }
                     for r in results
                 ],
@@ -284,6 +268,8 @@ class MCPServer:
                 "totalChunks": len(results),
                 "returnedChunks": len(limited_results),
             }
+        finally:
+            await search_service.close()
 
     async def _search_docs(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -305,30 +291,20 @@ class MCPServer:
         if not query:
             return {"error": "query is required"}
 
-        # Build filters
+        # Build filters - use 'library' field which is the string name in Qdrant
         filters = {}
 
         if library_id:
-            async for db in get_db():
-                library_service = LibraryService(db)
-                library = await library_service.get_library_by_id(library_id)
-                if library:
-                    filters["library_id"] = str(library.id)
+            filters["library"] = library_id
 
         if version:
             filters["version"] = version
 
-        if topic:
-            filters["topics"] = topic
+        # Get search service (standalone mode without DB session)
+        search_service = SearchService()
+        await search_service.initialize()
 
-        # Perform search
-        async for db in get_db():
-            search_service = SearchService(
-                db=db,
-                vector_db=None,
-                embedder=None,
-            )
-
+        try:
             results = await search_service.search(
                 query=query,
                 limit=limit * 2,  # Get more results for token limiting
@@ -336,13 +312,13 @@ class MCPServer:
                 filters=filters,
             )
 
-            # Limit by tokens
+            # Limit by tokens - results are dicts from search service
             limited_results = self.token_limiter.limit_results_to_tokens(
                 [
                     {
-                        "content": r.content,
-                        "metadata": r.metadata,
-                        "score": r.score,
+                        "content": r.get("content", ""),
+                        "metadata": {k: v for k, v in r.items() if k not in ["content", "score"]},
+                        "score": r.get("score", 0),
                     }
                     for r in results
                 ],
@@ -356,6 +332,8 @@ class MCPServer:
                 "totalChunks": len(results),
                 "returnedChunks": len(limited_results),
             }
+        finally:
+            await search_service.close()
 
 
 async def run_stdio_server():

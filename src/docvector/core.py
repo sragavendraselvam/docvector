@@ -79,6 +79,8 @@ class Settings(BaseSettings):
     qdrant_grpc_port: int = Field(default=6334)
     qdrant_use_grpc: bool = Field(default=False)
     qdrant_collection: str = Field(default="documents")
+    qdrant_url: Optional[str] = Field(default=None)  # Cloud URL (e.g., https://xxx.cloud.qdrant.io:6333)
+    qdrant_api_key: Optional[str] = Field(default=None)  # Cloud API key
 
     # Embeddings
     embedding_provider: str = Field(default="local")  # "local" or "openai"
