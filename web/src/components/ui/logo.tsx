@@ -33,7 +33,8 @@ export function LogoMark({
   variant = "gradient",
   className = ""
 }: Omit<LogoProps, "showText">) {
-  const gradientId = `vectorD-${size}-${Math.random().toString(36).substr(2, 9)}`;
+  // Use a stable ID based on size and variant to prevent hydration errors
+  const gradientId = `vectorD-${size}-${variant}`;
 
   return (
     <svg
@@ -116,7 +117,8 @@ export function LogoWordmark({
 
 // The stylized "o" as inline search symbol for the wordmark
 function SearchO({ variant = "gradient", className = "" }: { variant?: LogoProps["variant"]; className?: string }) {
-  const gradientId = `searchO-${Math.random().toString(36).substr(2, 9)}`;
+  // Use a stable ID based on variant to prevent hydration errors
+  const gradientId = `searchO-${variant}`;
 
   const strokeColor = variant === "gradient" ? `url(#${gradientId})` :
                      variant === "white" ? "#ffffff" :
