@@ -1,8 +1,5 @@
 "use client";
 
-import { useEffect } from "react";
-import { useRouter } from "next/navigation";
-import { useAuth } from "@/lib/auth-context";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Logo } from "@/components/ui/logo";
@@ -10,23 +7,6 @@ import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { Search, Zap, Shield, ArrowRight, Sparkles } from "lucide-react";
 
 export default function Home() {
-  const { user, loading } = useAuth();
-  const router = useRouter();
-
-  useEffect(() => {
-    if (!loading && user) {
-      router.push("/dashboard");
-    }
-  }, [user, loading, router]);
-
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center" style={{ background: "var(--background)" }}>
-        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-cyan-500"></div>
-      </div>
-    );
-  }
-
   return (
     <div className="min-h-screen" style={{ background: "var(--background)" }}>
       {/* Gradient background overlay */}
@@ -41,11 +21,11 @@ export default function Home() {
           <Logo size={40} />
           <div className="flex items-center space-x-4">
             <ThemeToggle />
-            <Link href="/login">
-              <Button variant="ghost">Sign in</Button>
+            <Link href="/dashboard/sources">
+              <Button variant="ghost">Manage Sources</Button>
             </Link>
-            <Link href="/register">
-              <Button>Get Started</Button>
+            <Link href="/search">
+              <Button>Search Docs</Button>
             </Link>
           </div>
         </nav>
@@ -71,12 +51,12 @@ export default function Home() {
             answers. Powered by vector embeddings and hybrid search.
           </p>
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
-            <Link href="/register">
+            <Link href="/search">
               <button className="group relative inline-flex items-center justify-center px-8 py-4 text-base font-medium text-white rounded-xl overflow-hidden transition-all duration-300 hover:scale-105">
                 <div className="absolute inset-0 bg-gradient-to-r from-cyan-500 to-violet-500 transition-all duration-300 group-hover:from-cyan-400 group-hover:to-violet-400"></div>
                 <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300 bg-gradient-to-r from-cyan-400 to-violet-400 blur-xl"></div>
                 <span className="relative flex items-center gap-2">
-                  Start Free Trial
+                  Start Searching
                   <ArrowRight className="h-5 w-5 group-hover:translate-x-1 transition-transform" />
                 </span>
               </button>

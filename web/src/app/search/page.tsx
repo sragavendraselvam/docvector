@@ -8,10 +8,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
 import { Navbar } from "@/components/layout/navbar";
-import { useAuth } from "@/lib/auth-context";
 
 export default function SearchPage() {
-  const { user } = useAuth();
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
   const [loading, setLoading] = useState(false);
@@ -20,10 +18,9 @@ export default function SearchPage() {
   const [selectedLibrary, setSelectedLibrary] = useState<string>("");
 
   useEffect(() => {
-    if (user) {
-      api.listLibraries().then(setLibraries).catch(console.error);
-    }
-  }, [user]);
+    // Load libraries for filter dropdown
+    api.listLibraries().then(setLibraries).catch(console.error);
+  }, []);
 
   const handleSearch = async (e?: React.FormEvent) => {
     e?.preventDefault();
@@ -49,7 +46,7 @@ export default function SearchPage() {
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-950">
-      {user && <Navbar />}
+      <Navbar />
 
       <main className="max-w-4xl mx-auto px-4 py-12">
         {/* Header */}
@@ -117,50 +114,51 @@ export default function SearchPage() {
           </div>
         ) : (
           <div className="space-y-4">
-            {results.map((result, index) => (
-              <Card key={result.chunk_id || index} className="hover:shadow-md transition-shadow">
-                <CardContent className="p-5">
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-2">
-                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-primary-100 text-primary-800 dark:bg-primary-900/30 dark:text-primary-400">
-                          {result.library_name || "Unknown"}
-                        </span>
-                        <span className="text-xs text-gray-500 dark:text-gray-400">
-                          Score: {(result.score * 100).toFixed(1)}%
-                        </span>
-                      </div>
-                      <p className="text-gray-700 dark:text-gray-300 text-sm leading-relaxed line-clamp-4">
-                        {result.content}
-                      </p>
-                    </div>
-                    {result.source_url && (
-                      <a
-                        href={result.source_url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="flex-shrink-0 p-2 text-gray-400 hover:text-primary-600 transition-colors"
-                        title="View source"
-                      >
-                        <ExternalLink className="h-5 w-5" />
-                      </a>
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        )}
+            {results.map((result, index) => {
+              // Extract library name from metadata or URL
+              const libraryName = result.metadata?.library_name as string
+                || result.metadata?.source as string
+                || (result.url ? new URL(result.url).hostname.replace('www.', '').split('.')[0] : 'docs');
+              const sourceUrl = result.url || result.source_url;
 
-        {/* Not logged in prompt */}
-        {!user && searched && (
-          <div className="mt-8 p-6 bg-primary-50 dark:bg-primary-900/20 rounded-xl text-center">
-            <p className="text-primary-800 dark:text-primary-300 mb-4">
-              Sign in to save searches and access advanced features
-            </p>
-            <Link href="/login">
-              <Button>Sign in</Button>
-            </Link>
+              return (
+                <Card key={result.chunk_id || index} className="hover:shadow-md transition-shadow">
+                  <CardContent className="p-5">
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-2">
+                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-cyan-100 text-cyan-800 dark:bg-cyan-900/30 dark:text-cyan-400">
+                            {libraryName}
+                          </span>
+                          <span className="text-xs text-gray-500 dark:text-gray-400">
+                            Score: {(result.score * 100).toFixed(1)}%
+                          </span>
+                          {result.title && (
+                            <span className="text-xs text-gray-600 dark:text-gray-300 font-medium truncate max-w-[200px]">
+                              {result.title}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-gray-700 dark:text-gray-300 text-sm leading-relaxed line-clamp-4">
+                          {result.content}
+                        </p>
+                      </div>
+                      {sourceUrl && (
+                        <a
+                          href={sourceUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex-shrink-0 p-2 text-gray-400 hover:text-cyan-600 transition-colors"
+                          title="View source"
+                        >
+                          <ExternalLink className="h-5 w-5" />
+                        </a>
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })}
           </div>
         )}
       </main>

@@ -1,8 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
-import { useAuth } from "@/lib/auth-context";
 import { api, Source, Library } from "@/lib/api";
 import { Navbar } from "@/components/layout/navbar";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -21,8 +19,6 @@ import {
 } from "lucide-react";
 
 export default function SourcesPage() {
-  const { user, loading: authLoading } = useAuth();
-  const router = useRouter();
   const [sources, setSources] = useState<Source[]>([]);
   const [libraries, setLibraries] = useState<Library[]>([]);
   const [loading, setLoading] = useState(true);
@@ -35,16 +31,8 @@ export default function SourcesPage() {
   });
 
   useEffect(() => {
-    if (!authLoading && !user) {
-      router.push("/login");
-    }
-  }, [user, authLoading, router]);
-
-  useEffect(() => {
-    if (user) {
-      loadData();
-    }
-  }, [user]);
+    loadData();
+  }, []);
 
   const loadData = async () => {
     try {
@@ -110,14 +98,6 @@ export default function SourcesPage() {
         return <Clock className="h-5 w-5 text-gray-400" />;
     }
   };
-
-  if (authLoading || !user) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-primary-600"></div>
-      </div>
-    );
-  }
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-950">
@@ -238,53 +218,67 @@ export default function SourcesPage() {
               </div>
             ) : (
               <div className="divide-y divide-gray-200 dark:divide-gray-800">
-                {sources.map((source) => (
-                  <div key={source.id} className="py-4">
-                    <div className="flex items-start justify-between">
-                      <div className="flex items-start gap-4">
-                        <div className="h-10 w-10 rounded-lg bg-gray-100 dark:bg-gray-800 flex items-center justify-center flex-shrink-0">
-                          <Database className="h-5 w-5 text-gray-600 dark:text-gray-400" />
-                        </div>
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <p className="font-medium text-gray-900 dark:text-white">
-                              {source.name}
-                            </p>
-                            {getStatusIcon(source.status)}
+                {sources.map((source) => {
+                  // Extract URL from config
+                  const sourceUrl = source.config?.url || "";
+                  const docsCount = source.documents_count || 0;
+
+                  return (
+                    <div key={source.id} className="py-4">
+                      <div className="flex items-start justify-between">
+                        <div className="flex items-start gap-4">
+                          <div className="h-10 w-10 rounded-lg bg-gray-100 dark:bg-gray-800 flex items-center justify-center flex-shrink-0">
+                            <Database className="h-5 w-5 text-gray-600 dark:text-gray-400" />
                           </div>
-                          <a
-                            href={source.url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-sm text-primary-600 hover:text-primary-700 flex items-center gap-1"
-                          >
-                            {source.url}
-                            <ExternalLink className="h-3 w-3" />
-                          </a>
-                          <div className="mt-1 flex items-center gap-4 text-sm text-gray-500 dark:text-gray-400">
-                            <span>{source.documents_count || 0} documents</span>
-                            {source.last_sync_at && (
-                              <span>
-                                Last synced:{" "}
-                                {new Date(source.last_sync_at).toLocaleDateString()}
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <p className="font-medium text-gray-900 dark:text-white">
+                                {source.name}
+                              </p>
+                              {getStatusIcon(source.status)}
+                              <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300">
+                                {source.type}
                               </span>
+                            </div>
+                            {sourceUrl && (
+                              <a
+                                href={sourceUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-sm text-primary-600 hover:text-primary-700 flex items-center gap-1"
+                              >
+                                {sourceUrl}
+                                <ExternalLink className="h-3 w-3" />
+                              </a>
                             )}
+                            <div className="mt-1 flex items-center gap-4 text-sm text-gray-500 dark:text-gray-400">
+                              <span>{docsCount} documents</span>
+                              {source.last_synced_at && (
+                                <span>
+                                  Last synced:{" "}
+                                  {new Date(source.last_synced_at).toLocaleDateString()}
+                                </span>
+                              )}
+                              {source.sync_frequency && (
+                                <span className="capitalize">{source.sync_frequency}</span>
+                              )}
+                            </div>
                           </div>
                         </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => handleDeleteSource(source.id)}
-                          className="text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-900/20"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
+                        <div className="flex items-center gap-2">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleDeleteSource(source.id)}
+                            className="text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-900/20"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </CardContent>

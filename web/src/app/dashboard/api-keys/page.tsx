@@ -1,8 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
-import { useAuth } from "@/lib/auth-context";
 import { api, ApiKey, ApiKeyCreated } from "@/lib/api";
 import { Navbar } from "@/components/layout/navbar";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -20,8 +18,6 @@ import {
 } from "lucide-react";
 
 export default function ApiKeysPage() {
-  const { user, loading: authLoading } = useAuth();
-  const router = useRouter();
   const [apiKeys, setApiKeys] = useState<ApiKey[]>([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
@@ -31,16 +27,8 @@ export default function ApiKeysPage() {
   const [copiedKeyId, setCopiedKeyId] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!authLoading && !user) {
-      router.push("/login");
-    }
-  }, [user, authLoading, router]);
-
-  useEffect(() => {
-    if (user) {
-      loadApiKeys();
-    }
-  }, [user]);
+    loadApiKeys();
+  }, []);
 
   const loadApiKeys = async () => {
     try {
@@ -48,6 +36,7 @@ export default function ApiKeysPage() {
       setApiKeys(keys);
     } catch (err) {
       console.error("Failed to load API keys:", err);
+      // If authentication fails, just show empty state for OSS self-hosted
     } finally {
       setLoading(false);
     }
@@ -89,14 +78,6 @@ export default function ApiKeysPage() {
     setCopiedKeyId(keyId);
     setTimeout(() => setCopiedKeyId(null), 2000);
   };
-
-  if (authLoading || !user) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-primary-600"></div>
-      </div>
-    );
-  }
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-950">
@@ -284,19 +265,50 @@ export default function ApiKeysPage() {
         {/* Usage Instructions */}
         <Card className="mt-6">
           <CardHeader>
-            <CardTitle>Using Your API Key</CardTitle>
+            <CardTitle>Using the API</CardTitle>
           </CardHeader>
-          <CardContent>
-            <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-              Include your API key in the <code className="text-primary-600">X-API-Key</code> header:
-            </p>
-            <div className="bg-gray-900 rounded-lg p-4 overflow-x-auto">
-              <pre className="text-sm text-gray-300">
-                <code>{`curl -X POST https://api.docvector.dev/api/v1/search \\
-  -H "X-API-Key: dv_sk_your_api_key" \\
+          <CardContent className="space-y-4">
+            <div className="p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
+              <p className="text-sm text-blue-800 dark:text-blue-200 font-medium mb-2">
+                Self-Hosted Mode
+              </p>
+              <p className="text-sm text-blue-700 dark:text-blue-300">
+                For self-hosted DocVector instances, API keys are optional. You can use the API directly without authentication:
+              </p>
+            </div>
+
+            <div>
+              <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">
+                Search documents:
+              </p>
+              <div className="bg-gray-900 rounded-lg p-4 overflow-x-auto">
+                <pre className="text-sm text-gray-300">
+                  <code>{`curl -X POST http://localhost:8000/api/v1/search \\
   -H "Content-Type: application/json" \\
-  -d '{"query": "How to use hooks in React?"}'`}</code>
-              </pre>
+  -d '{"query": "How to use hooks in React?", "limit": 10}'`}</code>
+                </pre>
+              </div>
+            </div>
+
+            <div>
+              <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">
+                For MCP server integration, add to your Claude Code settings:
+              </p>
+              <div className="bg-gray-900 rounded-lg p-4 overflow-x-auto">
+                <pre className="text-sm text-gray-300">
+                  <code>{`{
+  "mcpServers": {
+    "docvector": {
+      "command": "python",
+      "args": ["-m", "docvector.mcp_server"],
+      "env": {
+        "DOCVECTOR_API_URL": "http://localhost:8000"
+      }
+    }
+  }
+}`}</code>
+                </pre>
+              </div>
             </div>
           </CardContent>
         </Card>
