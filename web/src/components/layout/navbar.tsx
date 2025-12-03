@@ -31,8 +31,6 @@ export function Navbar() {
   const { user, logout } = useAuth();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  if (!user) return null;
-
   return (
     <nav className="bg-white/80 dark:bg-gray-900/80 backdrop-blur-lg border-b border-gray-200 dark:border-gray-800 sticky top-0 z-50">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -65,27 +63,31 @@ export function Navbar() {
             </div>
           </div>
 
-          {/* User menu */}
+          {/* User menu / Theme Toggle */}
           <div className="hidden sm:ml-6 sm:flex sm:items-center space-x-2">
             <ThemeToggle />
-            <div className="flex items-center space-x-3 ml-2">
-              <div className="text-right">
-                <p className="text-sm font-medium text-gray-900 dark:text-white">
-                  {user.display_name || user.username}
-                </p>
-                <p className="text-xs text-gray-500 dark:text-gray-400">
-                  {user.email}
-                </p>
-              </div>
-              <div className="h-9 w-9 rounded-full bg-gradient-to-br from-cyan-500 to-violet-500 flex items-center justify-center">
-                <span className="text-white font-medium">
-                  {(user.display_name || user.username || "U")[0].toUpperCase()}
-                </span>
-              </div>
-            </div>
-            <Button variant="ghost" size="sm" onClick={logout}>
-              <LogOut className="h-4 w-4" />
-            </Button>
+            {user && (
+              <>
+                <div className="flex items-center space-x-3 ml-2">
+                  <div className="text-right">
+                    <p className="text-sm font-medium text-gray-900 dark:text-white">
+                      {user.display_name || user.username}
+                    </p>
+                    <p className="text-xs text-gray-500 dark:text-gray-400">
+                      {user.email}
+                    </p>
+                  </div>
+                  <div className="h-9 w-9 rounded-full bg-gradient-to-br from-cyan-500 to-violet-500 flex items-center justify-center">
+                    <span className="text-white font-medium">
+                      {(user.display_name || user.username || "U")[0].toUpperCase()}
+                    </span>
+                  </div>
+                </div>
+                <Button variant="ghost" size="sm" onClick={logout}>
+                  <LogOut className="h-4 w-4" />
+                </Button>
+              </>
+            )}
           </div>
 
           {/* Mobile menu button */}
@@ -128,29 +130,31 @@ export function Navbar() {
               );
             })}
           </div>
-          <div className="pt-4 pb-3 border-t border-gray-200 dark:border-gray-800 px-4">
-            <div className="flex items-center">
-              <div className="h-10 w-10 rounded-full bg-gradient-to-br from-cyan-500 to-violet-500 flex items-center justify-center">
-                <span className="text-white font-medium text-lg">
-                  {(user.display_name || user.username || "U")[0].toUpperCase()}
-                </span>
+          {user && (
+            <div className="pt-4 pb-3 border-t border-gray-200 dark:border-gray-800 px-4">
+              <div className="flex items-center">
+                <div className="h-10 w-10 rounded-full bg-gradient-to-br from-cyan-500 to-violet-500 flex items-center justify-center">
+                  <span className="text-white font-medium text-lg">
+                    {(user.display_name || user.username || "U")[0].toUpperCase()}
+                  </span>
+                </div>
+                <div className="ml-3">
+                  <p className="text-base font-medium text-gray-900 dark:text-white">
+                    {user.display_name || user.username}
+                  </p>
+                  <p className="text-sm text-gray-500 dark:text-gray-400">
+                    {user.email}
+                  </p>
+                </div>
               </div>
-              <div className="ml-3">
-                <p className="text-base font-medium text-gray-900 dark:text-white">
-                  {user.display_name || user.username}
-                </p>
-                <p className="text-sm text-gray-500 dark:text-gray-400">
-                  {user.email}
-                </p>
+              <div className="mt-3">
+                <Button variant="outline" className="w-full" onClick={logout}>
+                  <LogOut className="h-4 w-4 mr-2" />
+                  Sign out
+                </Button>
               </div>
             </div>
-            <div className="mt-3">
-              <Button variant="outline" className="w-full" onClick={logout}>
-                <LogOut className="h-4 w-4 mr-2" />
-                Sign out
-              </Button>
-            </div>
-          </div>
+          )}
         </div>
       )}
     </nav>
