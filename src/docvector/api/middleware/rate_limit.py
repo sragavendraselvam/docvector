@@ -3,9 +3,8 @@
 import time
 from typing import Optional
 
-from fastapi import Depends, HTTPException, Request, status
+from fastapi import HTTPException, Request, status
 
-from docvector.api.middleware.auth import AuthContext, get_auth_context
 from docvector.core import get_logger, settings
 
 logger = get_logger(__name__)
@@ -120,37 +119,19 @@ def get_rate_limiter() -> RateLimiter:
     return _rate_limiter
 
 
-async def rate_limit(
-    request: Request,
-    auth: AuthContext = Depends(get_auth_context),
-):
+async def rate_limit(request: Request):
     """Rate limiting dependency.
 
-    Rate limits are determined by:
-    1. API key settings (if authenticated with API key)
-    2. User tier (if authenticated with JWT)
-    3. IP address (if unauthenticated)
+    Rate limits are determined by IP address for OSS version.
+    Enterprise version adds API key and user-based rate limiting.
     """
     limiter = get_rate_limiter()
 
-    # Determine rate limit key and limits
-    if auth.api_key:
-        key = f"api_key:{auth.api_key.id}"
-        limit_per_second = auth.api_key.rate_limit_per_second
-        limit_per_day = auth.api_key.rate_limit_per_day
-    elif auth.user:
-        key = f"user:{auth.user.id}"
-        # Users get higher limits based on reputation
-        base_limit = 10
-        reputation_bonus = min(10, (auth.user.reputation or 0) // 100)
-        limit_per_second = base_limit + reputation_bonus
-        limit_per_day = None  # Unlimited for authenticated users
-    else:
-        # Anonymous users - use IP address
-        client_ip = request.client.host if request.client else "unknown"
-        key = f"ip:{client_ip}"
-        limit_per_second = 2  # Lower limit for anonymous
-        limit_per_day = 100  # Daily limit for anonymous
+    # Use IP address for rate limiting (OSS version)
+    client_ip = request.client.host if request.client else "unknown"
+    key = f"ip:{client_ip}"
+    limit_per_second = 5  # Base limit
+    limit_per_day = 1000  # Daily limit
 
     try:
         is_allowed, info = await limiter.check_rate_limit(
