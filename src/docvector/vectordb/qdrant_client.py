@@ -321,6 +321,46 @@ class QdrantVectorDB(BaseVectorDB):
 
         return result.count
 
+    async def get_collection_info(self, collection_name: Optional[str] = None) -> Optional[Dict]:
+        """
+        Get detailed collection information.
+        
+        Args:
+            collection_name: Collection name (defaults to settings.qdrant_collection)
+            
+        Returns:
+            Dictionary containing:
+            - name: Collection name  
+            - vectors_count: Number of vectors
+            - points_count: Number of points
+            - vector_size: Dimension of vectors
+            - distance: Distance metric used
+            - status: Collection status
+            Returns None if collection doesn't exist or on error
+        """
+        await self.initialize()
+        
+        collection_name = collection_name or settings.qdrant_collection
+        
+        try:
+            info = await self.client.get_collection(collection_name)
+            
+            # Extract distance metric enum to string
+            distance_str = str(info.config.params.vectors.distance)
+            distance_name = distance_str.split('.')[-1] if '.' in distance_str else distance_str
+            
+            return {
+                "name": collection_name,
+                "vectors_count": info.vectors_count or 0,
+                "points_count": info.points_count or 0,
+                "vector_size": info.config.params.vectors.size,
+                "distance": distance_name,
+                "status": str(info.status),
+            }
+        except Exception as e:
+            logger.warning(f"Failed to get collection info: {e}")
+            return None
+
     async def close(self) -> None:
         """Close Qdrant client."""
         if self.client:

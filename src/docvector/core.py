@@ -106,9 +106,69 @@ class Settings(BaseSettings):
         default="DocVector/0.1.0 (https://github.com/docvector/docvector)"
     )
 
+    def to_dict(self, exclude_sensitive: bool = True) -> dict:
+        """
+        Export settings to dictionary.
 
-# Global settings instance
-settings = Settings()
+        Args:
+            exclude_sensitive: If True, exclude sensitive fields like API keys
+
+        Returns:
+            Dictionary of settings
+        """
+        config_dict = self.model_dump(exclude_none=True)
+        
+        if exclude_sensitive:
+            sensitive_fields = ["openai_api_key"]
+            for field in sensitive_fields:
+                config_dict.pop(field, None)
+        
+        return config_dict
+
+    def to_yaml(self, exclude_sensitive: bool = True) -> str:
+        """
+        Export settings to YAML string.
+
+        Args:
+            exclude_sensitive: If True, exclude sensitive fields like API keys
+
+        Returns:
+            YAML formatted string
+        """
+        import yaml
+        
+        config_dict = self.to_dict(exclude_sensitive=exclude_sensitive)
+        return yaml.dump(config_dict, default_flow_style=False, sort_keys=False, indent=2)
+
+
+
+def _load_global_settings() -> "Settings":
+    """
+    Load global settings from config files with proper precedence.
+    
+    Config loading order (highest to lowest priority):
+    1. Environment variables (DOCVECTOR_*)
+    2. Local project config (./docvector.yaml)
+    3. User-global config (~/.docvector/config.yaml)
+    4. Built-in defaults (Settings class)
+    
+    Returns:
+        Settings instance with merged configuration from all sources
+    """
+    try:
+        # Import here to avoid circular dependency at module load time
+        from docvector.config import load_config
+        return load_config()
+    except Exception as e:
+        # Fallback to defaults if config loading fails
+        # This ensures the app still works even if there's a config error
+        import warnings
+        warnings.warn(f"Failed to load config, using defaults: {e}")
+        return Settings()
+
+
+# Global settings instance - automatically loads from config files
+settings = _load_global_settings()
 
 
 def setup_logging(level: Optional[str] = None) -> None:
