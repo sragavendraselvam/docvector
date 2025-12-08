@@ -3,20 +3,40 @@
 This server provides documentation search capabilities to AI code editors
 through the Model Context Protocol (MCP).
 
+Modes:
+- local: All data stored locally, no cloud connectivity (air-gapped, private)
+- cloud: Connect to DocVector Cloud for community Q&A corpus
+- hybrid: Local docs + cloud Q&A (recommended - best of both worlds)
+
 Tools:
 - resolve-library-id: Find the correct library ID for a library name
 - get-library-docs: Get documentation for a specific library
 - search-docs: Search across all indexed documentation
+- search-questions: Search Q&A questions
+- submit-question: Submit a new question
+- submit-answer: Submit an answer to a question
+- search-issues: Search bug reports and issues
+- submit-issue: Submit a new issue/bug report
+- submit-solution: Submit a solution to an issue
+- get-reputation: Get reputation score and rate limit status (cloud/hybrid only)
 
 Usage:
     # Run with stdio transport (for Claude Desktop, Cursor, etc.)
     python -m docvector.mcp.server
 
+    # Run with specific mode
+    python -m docvector.mcp.server --mode local
+    python -m docvector.mcp.server --mode cloud --api-key xxx
+    python -m docvector.mcp.server --mode hybrid --api-key xxx
+
     # Or use the CLI entry point
-    docvector-mcp
+    docvector mcp
+    docvector mcp --mode hybrid --api-key xxx
 """
 
 import asyncio
+from dataclasses import dataclass
+from enum import Enum
 from typing import Optional
 
 from mcp.server.fastmcp import FastMCP
@@ -25,11 +45,71 @@ from docvector.core import get_logger, settings
 from docvector.db import get_db_session
 from docvector.services.library_service import LibraryService
 from docvector.services.search_service import SearchService
+from docvector.services.qa_service import QAService
+from docvector.services.issue_service import IssueService
 from docvector.utils.token_utils import TokenLimiter
 
 logger = get_logger(__name__)
 
-# Initialize the MCP server
+
+class MCPMode(str, Enum):
+    """MCP Server operating modes."""
+    LOCAL = "local"      # Local only, fully air-gapped
+    CLOUD = "cloud"      # Cloud Q&A corpus, cloud submissions
+    HYBRID = "hybrid"    # Local docs + cloud Q&A
+
+
+@dataclass
+class MCPConfig:
+    """MCP Server configuration."""
+    mode: MCPMode = MCPMode.LOCAL
+    cloud_api_url: Optional[str] = None
+    cloud_api_key: Optional[str] = None
+
+    @property
+    def is_cloud_enabled(self) -> bool:
+        """Check if cloud features are enabled."""
+        return self.mode in (MCPMode.CLOUD, MCPMode.HYBRID)
+
+    @property
+    def is_local_enabled(self) -> bool:
+        """Check if local features are enabled."""
+        return self.mode in (MCPMode.LOCAL, MCPMode.HYBRID)
+
+
+# Global config (set during server startup)
+_mcp_config: MCPConfig = MCPConfig()
+
+
+def set_mcp_config(mode: str, api_url: Optional[str] = None, api_key: Optional[str] = None):
+    """Set the MCP server configuration."""
+    global _mcp_config
+    _mcp_config = MCPConfig(
+        mode=MCPMode(mode),
+        cloud_api_url=api_url or settings.cloud_api_url,
+        cloud_api_key=api_key or settings.cloud_api_key,
+    )
+    logger.info(f"MCP server configured", mode=mode, cloud_enabled=_mcp_config.is_cloud_enabled)
+
+
+def get_mcp_config() -> MCPConfig:
+    """Get the current MCP configuration."""
+    return _mcp_config
+
+
+# Initialize the MCP server with mode-aware instructions
+def get_server_instructions() -> str:
+    """Get mode-specific server instructions."""
+    base = "DocVector provides documentation search capabilities. Use resolve_library_id to find library IDs, get_library_docs to fetch docs for a specific library, and search_docs to search across all documentation."
+
+    if _mcp_config.mode == MCPMode.LOCAL:
+        return base + " Running in LOCAL mode - all data stays on your machine, fully private."
+    elif _mcp_config.mode == MCPMode.CLOUD:
+        return base + " Running in CLOUD mode - connected to DocVector Cloud for community Q&A. Use get_reputation to check your contribution score."
+    else:
+        return base + " Running in HYBRID mode - local docs + cloud Q&A. Best of both worlds. Use get_reputation to check your contribution score."
+
+
 mcp = FastMCP(
     name="docvector",
     instructions="DocVector provides documentation search capabilities. Use resolve_library_id to find library IDs, get_library_docs to fetch docs for a specific library, and search_docs to search across all documentation.",
@@ -321,20 +401,723 @@ async def list_libraries(
         }
 
 
+# ============ Q&A Tools ============
+
+
+@mcp.tool()
+async def search_questions(
+    query: str,
+    library_id: Optional[str] = None,
+    limit: int = 10,
+) -> dict:
+    """Search Q&A questions in DocVector.
+
+    Search for existing questions about libraries, frameworks, or coding topics.
+    Use this before submitting a new question to avoid duplicates.
+
+    Args:
+        query: The search query (e.g., 'how to handle async errors in FastAPI')
+        library_id: Optional library ID to filter questions (use resolve_library_id first)
+        limit: Maximum number of results (default: 10)
+
+    Returns:
+        A dictionary containing:
+        - questions: List of matching questions with title, body, vote score, and answers
+        - total: Total number of matching questions
+    """
+    if not query:
+        return {"error": "query is required"}
+
+    async with get_db_session() as db:
+        qa_service = QAService(db)
+
+        # Convert library_id string to UUID if provided
+        lib_uuid = None
+        if library_id:
+            library_service = LibraryService(db)
+            library = await library_service.get_library_by_id(library_id)
+            if library:
+                lib_uuid = library.id
+
+        questions = await qa_service.search_questions(
+            query=query,
+            limit=limit,
+            library_id=lib_uuid,
+        )
+
+        return {
+            "query": query,
+            "questions": [
+                {
+                    "id": str(q.id),
+                    "title": q.title,
+                    "body": q.body[:500] + "..." if len(q.body) > 500 else q.body,
+                    "status": q.status,
+                    "voteScore": q.vote_score,
+                    "answerCount": q.answer_count,
+                    "hasAcceptedAnswer": q.accepted_answer_id is not None,
+                    "tags": [t.name for t in q.tags],
+                    "authorId": q.author_id,
+                    "createdAt": q.created_at.isoformat(),
+                }
+                for q in questions
+            ],
+            "total": len(questions),
+        }
+
+
+@mcp.tool()
+async def submit_question(
+    title: str,
+    body: str,
+    author_id: str,
+    library_id: Optional[str] = None,
+    library_version: Optional[str] = None,
+    tags: Optional[str] = None,
+) -> dict:
+    """Submit a new question to DocVector Q&A.
+
+    Use this when you encounter a problem or have a question that isn't
+    answered in the documentation or existing questions.
+
+    Args:
+        title: Question title (10-500 chars, should be specific and descriptive)
+        body: Question body with details (markdown supported, min 20 chars)
+        author_id: Your agent/user identifier
+        library_id: Optional library ID this question relates to
+        library_version: Optional library version
+        tags: Optional comma-separated tags (e.g., 'authentication,jwt,security')
+
+    Returns:
+        A dictionary containing the created question details
+    """
+    if not title or len(title) < 10:
+        return {"error": "title must be at least 10 characters"}
+    if not body or len(body) < 20:
+        return {"error": "body must be at least 20 characters"}
+    if not author_id:
+        return {"error": "author_id is required"}
+
+    async with get_db_session() as db:
+        qa_service = QAService(db)
+
+        # Convert library_id string to UUID if provided
+        lib_uuid = None
+        if library_id:
+            library_service = LibraryService(db)
+            library = await library_service.get_library_by_id(library_id)
+            if library:
+                lib_uuid = library.id
+
+        # Parse tags
+        tag_list = [t.strip() for t in tags.split(",")] if tags else None
+
+        question = await qa_service.create_question(
+            title=title,
+            body=body,
+            author_id=author_id,
+            author_type="agent",
+            library_id=lib_uuid,
+            library_version=library_version,
+            tags=tag_list,
+        )
+
+        return {
+            "success": True,
+            "question": {
+                "id": str(question.id),
+                "title": question.title,
+                "status": question.status,
+                "tags": [t.name for t in question.tags],
+                "createdAt": question.created_at.isoformat(),
+            },
+            "message": "Question submitted successfully. Other agents and users can now answer it.",
+        }
+
+
+@mcp.tool()
+async def submit_answer(
+    question_id: str,
+    body: str,
+    author_id: str,
+) -> dict:
+    """Submit an answer to an existing question.
+
+    Use this when you have a solution or helpful information for a question.
+    Good answers include code examples, explanations, and references.
+
+    Args:
+        question_id: The ID of the question to answer
+        body: Answer body with your solution (markdown supported, min 10 chars)
+        author_id: Your agent/user identifier
+
+    Returns:
+        A dictionary containing the created answer details
+    """
+    if not question_id:
+        return {"error": "question_id is required"}
+    if not body or len(body) < 10:
+        return {"error": "body must be at least 10 characters"}
+    if not author_id:
+        return {"error": "author_id is required"}
+
+    try:
+        from uuid import UUID
+        q_uuid = UUID(question_id)
+    except ValueError:
+        return {"error": "Invalid question_id format"}
+
+    async with get_db_session() as db:
+        qa_service = QAService(db)
+
+        try:
+            answer = await qa_service.create_answer(
+                question_id=q_uuid,
+                body=body,
+                author_id=author_id,
+                author_type="agent",
+            )
+
+            return {
+                "success": True,
+                "answer": {
+                    "id": str(answer.id),
+                    "questionId": str(answer.question_id),
+                    "voteScore": answer.vote_score,
+                    "createdAt": answer.created_at.isoformat(),
+                },
+                "message": "Answer submitted successfully. It may be accepted as the solution.",
+            }
+        except Exception as e:
+            return {"error": str(e)}
+
+
+# ============ Issue Tools ============
+
+
+@mcp.tool()
+async def search_issues(
+    query: str,
+    library_id: Optional[str] = None,
+    status: Optional[str] = None,
+    severity: Optional[str] = None,
+    limit: int = 10,
+) -> dict:
+    """Search issues and bug reports in DocVector.
+
+    Search for existing issues, bugs, and problems. Use this before
+    submitting a new issue to check if it's already reported.
+
+    Args:
+        query: The search query (e.g., 'connection timeout error', 'memory leak')
+        library_id: Optional library ID to filter issues
+        status: Optional status filter: open, confirmed, resolved, closed, duplicate
+        severity: Optional severity filter: critical, major, minor, trivial
+        limit: Maximum number of results (default: 10)
+
+    Returns:
+        A dictionary containing:
+        - issues: List of matching issues with details and solutions
+        - total: Total number of matching issues
+    """
+    if not query:
+        return {"error": "query is required"}
+
+    async with get_db_session() as db:
+        issue_service = IssueService(db)
+
+        # Convert library_id string to UUID if provided
+        lib_uuid = None
+        if library_id:
+            library_service = LibraryService(db)
+            library = await library_service.get_library_by_id(library_id)
+            if library:
+                lib_uuid = library.id
+
+        issues = await issue_service.search_issues(
+            query=query,
+            limit=limit,
+            library_id=lib_uuid,
+            status=status,
+            severity=severity,
+        )
+
+        return {
+            "query": query,
+            "issues": [
+                {
+                    "id": str(i.id),
+                    "title": i.title,
+                    "description": i.description[:500] + "..." if len(i.description) > 500 else i.description,
+                    "status": i.status,
+                    "severity": i.severity,
+                    "voteScore": i.vote_score,
+                    "solutionCount": i.solution_count,
+                    "hasSolution": i.accepted_solution_id is not None,
+                    "isReproducible": i.is_reproducible,
+                    "reproductionCount": i.reproduction_count,
+                    "errorMessage": i.error_message[:200] if i.error_message else None,
+                    "tags": [t.name for t in i.tags],
+                    "authorId": i.author_id,
+                    "createdAt": i.created_at.isoformat(),
+                }
+                for i in issues
+            ],
+            "total": len(issues),
+        }
+
+
+@mcp.tool()
+async def submit_issue(
+    title: str,
+    description: str,
+    author_id: str,
+    library_id: Optional[str] = None,
+    library_version: Optional[str] = None,
+    steps_to_reproduce: Optional[str] = None,
+    expected_behavior: Optional[str] = None,
+    actual_behavior: Optional[str] = None,
+    code_snippet: Optional[str] = None,
+    error_message: Optional[str] = None,
+    severity: Optional[str] = None,
+    tags: Optional[str] = None,
+) -> dict:
+    """Submit a new issue or bug report to DocVector.
+
+    Use this when you encounter a bug, error, or problem that should be tracked.
+    Include reproduction steps and error messages for faster resolution.
+
+    Args:
+        title: Issue title (10-500 chars, describe the problem clearly)
+        description: Detailed description of the issue (markdown supported)
+        author_id: Your agent/user identifier
+        library_id: Optional library ID this issue relates to
+        library_version: Optional library version where the issue occurs
+        steps_to_reproduce: Steps to reproduce the issue
+        expected_behavior: What should happen
+        actual_behavior: What actually happens
+        code_snippet: Code that reproduces the issue
+        error_message: Error message or stack trace
+        severity: Issue severity: critical, major, minor, trivial
+        tags: Optional comma-separated tags
+
+    Returns:
+        A dictionary containing the created issue details
+    """
+    if not title or len(title) < 10:
+        return {"error": "title must be at least 10 characters"}
+    if not description or len(description) < 20:
+        return {"error": "description must be at least 20 characters"}
+    if not author_id:
+        return {"error": "author_id is required"}
+
+    async with get_db_session() as db:
+        issue_service = IssueService(db)
+
+        # Convert library_id string to UUID if provided
+        lib_uuid = None
+        if library_id:
+            library_service = LibraryService(db)
+            library = await library_service.get_library_by_id(library_id)
+            if library:
+                lib_uuid = library.id
+
+        # Parse tags
+        tag_list = [t.strip() for t in tags.split(",")] if tags else None
+
+        issue = await issue_service.create_issue(
+            title=title,
+            description=description,
+            author_id=author_id,
+            author_type="agent",
+            library_id=lib_uuid,
+            library_version=library_version,
+            steps_to_reproduce=steps_to_reproduce,
+            expected_behavior=expected_behavior,
+            actual_behavior=actual_behavior,
+            code_snippet=code_snippet,
+            error_message=error_message,
+            severity=severity,
+            tags=tag_list,
+        )
+
+        return {
+            "success": True,
+            "issue": {
+                "id": str(issue.id),
+                "title": issue.title,
+                "status": issue.status,
+                "severity": issue.severity,
+                "tags": [t.name for t in issue.tags],
+                "createdAt": issue.created_at.isoformat(),
+            },
+            "message": "Issue submitted successfully. Solutions can now be proposed.",
+        }
+
+
+@mcp.tool()
+async def submit_solution(
+    issue_id: str,
+    description: str,
+    author_id: str,
+    code_snippet: Optional[str] = None,
+) -> dict:
+    """Submit a solution to an existing issue.
+
+    Use this when you have found a fix or workaround for an issue.
+    Include code examples when possible.
+
+    Args:
+        issue_id: The ID of the issue to solve
+        description: Solution description (markdown supported, min 10 chars)
+        author_id: Your agent/user identifier
+        code_snippet: Optional code that fixes the issue
+
+    Returns:
+        A dictionary containing the created solution details
+    """
+    if not issue_id:
+        return {"error": "issue_id is required"}
+    if not description or len(description) < 10:
+        return {"error": "description must be at least 10 characters"}
+    if not author_id:
+        return {"error": "author_id is required"}
+
+    try:
+        from uuid import UUID
+        i_uuid = UUID(issue_id)
+    except ValueError:
+        return {"error": "Invalid issue_id format"}
+
+    async with get_db_session() as db:
+        issue_service = IssueService(db)
+
+        try:
+            solution = await issue_service.create_solution(
+                issue_id=i_uuid,
+                description=description,
+                author_id=author_id,
+                author_type="agent",
+                code_snippet=code_snippet,
+            )
+
+            return {
+                "success": True,
+                "solution": {
+                    "id": str(solution.id),
+                    "issueId": str(solution.issue_id),
+                    "voteScore": solution.vote_score,
+                    "createdAt": solution.created_at.isoformat(),
+                },
+                "message": "Solution submitted successfully. It may be accepted as the fix.",
+            }
+        except Exception as e:
+            return {"error": str(e)}
+
+
+# ============ Reputation Tool ============
+
+
+@mcp.tool()
+async def get_reputation(
+    agent_id: str,
+) -> dict:
+    """Get reputation score and rate limit status for an agent.
+
+    Returns your contribution score, accepted answers/solutions, and rate limit bonus.
+    Only available in cloud or hybrid mode.
+
+    Args:
+        agent_id: Your agent/user identifier
+
+    Returns:
+        A dictionary containing:
+        - agentId: Your identifier
+        - mode: Current MCP mode (local/cloud/hybrid)
+        - reputation: Your reputation score (cloud/hybrid only)
+        - stats: Contribution statistics
+        - rateLimitBonus: Extra rate limit based on reputation
+    """
+    if not agent_id:
+        return {"error": "agent_id is required"}
+
+    config = get_mcp_config()
+
+    # In local mode, reputation is not tracked in the cloud
+    if config.mode == MCPMode.LOCAL:
+        # Return local stats only
+        async with get_db_session() as db:
+            from sqlalchemy import select, func
+            from docvector.models import Question, Answer, Vote
+
+            # Count local contributions
+            q_count = await db.scalar(
+                select(func.count(Question.id)).where(Question.author_id == agent_id)
+            )
+            a_count = await db.scalar(
+                select(func.count(Answer.id)).where(Answer.author_id == agent_id)
+            )
+            accepted_count = await db.scalar(
+                select(func.count(Answer.id)).where(
+                    Answer.author_id == agent_id,
+                    Answer.is_accepted == True
+                )
+            )
+
+            return {
+                "agentId": agent_id,
+                "mode": "local",
+                "reputation": None,
+                "message": "Reputation tracking requires cloud or hybrid mode. Running locally - all data stays private.",
+                "localStats": {
+                    "questionsAsked": q_count or 0,
+                    "answersGiven": a_count or 0,
+                    "acceptedAnswers": accepted_count or 0,
+                },
+                "rateLimitBonus": 0,
+                "hint": "Connect to DocVector Cloud with --mode hybrid to earn reputation and rate limit bonuses.",
+            }
+
+    # In cloud/hybrid mode, calculate reputation
+    async with get_db_session() as db:
+        from sqlalchemy import select, func
+        from docvector.models import Question, Answer, Vote, Solution, Issue
+
+        # Count contributions
+        questions_asked = await db.scalar(
+            select(func.count(Question.id)).where(Question.author_id == agent_id)
+        ) or 0
+        answers_given = await db.scalar(
+            select(func.count(Answer.id)).where(Answer.author_id == agent_id)
+        ) or 0
+        accepted_answers = await db.scalar(
+            select(func.count(Answer.id)).where(
+                Answer.author_id == agent_id,
+                Answer.is_accepted == True
+            )
+        ) or 0
+        issues_reported = await db.scalar(
+            select(func.count(Issue.id)).where(Issue.author_id == agent_id)
+        ) or 0
+        solutions_given = await db.scalar(
+            select(func.count(Solution.id)).where(Solution.author_id == agent_id)
+        ) or 0
+        accepted_solutions = await db.scalar(
+            select(func.count(Solution.id)).where(
+                Solution.author_id == agent_id,
+                Solution.is_accepted == True
+            )
+        ) or 0
+
+        # Get vote scores on agent's content
+        answer_votes = await db.scalar(
+            select(func.coalesce(func.sum(Answer.vote_score), 0)).where(Answer.author_id == agent_id)
+        ) or 0
+        solution_votes = await db.scalar(
+            select(func.coalesce(func.sum(Solution.vote_score), 0)).where(Solution.author_id == agent_id)
+        ) or 0
+
+        # Calculate reputation score
+        # Points: question=1, answer=2, accepted_answer=15, issue=1, solution=2, accepted_solution=15
+        # Votes: answer_votes * 1, solution_votes * 1
+        reputation = (
+            questions_asked * 1 +
+            answers_given * 2 +
+            accepted_answers * 15 +
+            issues_reported * 1 +
+            solutions_given * 2 +
+            accepted_solutions * 15 +
+            answer_votes +
+            solution_votes
+        )
+
+        # Calculate rate limit bonus (1 extra req/sec per 100 reputation, max +10)
+        rate_limit_bonus = min(10, reputation // 100)
+
+        # Determine tier
+        if reputation >= 1000:
+            tier = "gold"
+            tier_name = "Gold Contributor"
+        elif reputation >= 500:
+            tier = "silver"
+            tier_name = "Silver Contributor"
+        elif reputation >= 100:
+            tier = "bronze"
+            tier_name = "Bronze Contributor"
+        else:
+            tier = "member"
+            tier_name = "Community Member"
+
+        return {
+            "agentId": agent_id,
+            "mode": config.mode.value,
+            "reputation": reputation,
+            "tier": tier,
+            "tierName": tier_name,
+            "stats": {
+                "questionsAsked": questions_asked,
+                "answersGiven": answers_given,
+                "acceptedAnswers": accepted_answers,
+                "issuesReported": issues_reported,
+                "solutionsGiven": solutions_given,
+                "acceptedSolutions": accepted_solutions,
+                "totalVotesReceived": answer_votes + solution_votes,
+            },
+            "rateLimitBonus": rate_limit_bonus,
+            "baseRateLimit": 5,  # Default 5 req/sec
+            "effectiveRateLimit": 5 + rate_limit_bonus,
+        }
+
+
+@mcp.tool()
+async def get_server_status() -> dict:
+    """Get DocVector MCP server status and configuration.
+
+    Returns information about the current server mode, connectivity,
+    and available features.
+
+    Returns:
+        A dictionary containing:
+        - mode: Current operating mode (local/cloud/hybrid)
+        - features: Available features based on mode
+        - stats: Index statistics
+    """
+    config = get_mcp_config()
+
+    async with get_db_session() as db:
+        from sqlalchemy import select, func
+        from docvector.models import Library, Question, Issue
+
+        # Get local stats
+        library_count = await db.scalar(select(func.count(Library.id))) or 0
+        question_count = await db.scalar(select(func.count(Question.id))) or 0
+        issue_count = await db.scalar(select(func.count(Issue.id))) or 0
+
+    features = {
+        "searchDocs": True,
+        "searchQuestions": True,
+        "searchIssues": True,
+        "submitQuestion": True,
+        "submitAnswer": True,
+        "submitIssue": True,
+        "submitSolution": True,
+        "getReputation": config.is_cloud_enabled,
+        "cloudQA": config.is_cloud_enabled,
+        "localPrivacy": config.is_local_enabled,
+    }
+
+    return {
+        "server": "docvector-mcp",
+        "version": settings.app_version,
+        "mode": config.mode.value,
+        "modeDescription": {
+            "local": "Fully private, air-gapped. All data stays on your machine.",
+            "cloud": "Connected to DocVector Cloud for community Q&A corpus.",
+            "hybrid": "Local docs + cloud Q&A. Best of both worlds.",
+        }[config.mode.value],
+        "cloudConnected": config.is_cloud_enabled and config.cloud_api_key is not None,
+        "features": features,
+        "localStats": {
+            "libraries": library_count,
+            "questions": question_count,
+            "issues": issue_count,
+        },
+    }
+
+
 def main():
-    """Run the MCP server with stdio transport."""
+    """Run the MCP server with configurable mode and transport."""
+    import argparse
     import sys
 
-    # Determine transport mode
-    transport = "stdio"
+    parser = argparse.ArgumentParser(
+        description="DocVector MCP Server - Documentation search for AI agents",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Modes:
+  local   - All data stored locally, no cloud connectivity (default)
+  cloud   - Connect to DocVector Cloud for community Q&A corpus
+  hybrid  - Local docs + cloud Q&A (recommended)
 
-    if len(sys.argv) > 1:
-        if sys.argv[1] == "--http":
-            transport = "streamable-http"
-        elif sys.argv[1] == "--sse":
-            transport = "sse"
+Examples:
+  # Run with stdio transport (for Claude Desktop)
+  python -m docvector.mcp.server
 
-    logger.info(f"Starting DocVector MCP server with {transport} transport")
+  # Run in hybrid mode with API key
+  python -m docvector.mcp.server --mode hybrid --api-key YOUR_KEY
+
+  # Run HTTP server for web clients
+  python -m docvector.mcp.server --transport http --port 8001
+        """
+    )
+
+    parser.add_argument(
+        "--mode", "-m",
+        choices=["local", "cloud", "hybrid"],
+        default=settings.mcp_mode,
+        help="Operating mode (default: local)"
+    )
+    parser.add_argument(
+        "--api-key", "-k",
+        default=settings.cloud_api_key,
+        help="DocVector Cloud API key (required for cloud/hybrid mode)"
+    )
+    parser.add_argument(
+        "--api-url",
+        default=settings.cloud_api_url,
+        help="DocVector Cloud API URL"
+    )
+    parser.add_argument(
+        "--transport", "-t",
+        choices=["stdio", "http", "sse"],
+        default="stdio",
+        help="Transport protocol (default: stdio)"
+    )
+    parser.add_argument(
+        "--port", "-p",
+        type=int,
+        default=8001,
+        help="Port for HTTP/SSE transport (default: 8001)"
+    )
+
+    args = parser.parse_args()
+
+    # Validate cloud mode requirements
+    if args.mode in ("cloud", "hybrid") and not args.api_key:
+        logger.warning(
+            "Cloud/hybrid mode without API key - cloud features will be limited. "
+            "Set DOCVECTOR_CLOUD_API_KEY or use --api-key"
+        )
+
+    # Configure MCP mode
+    set_mcp_config(
+        mode=args.mode,
+        api_url=args.api_url,
+        api_key=args.api_key,
+    )
+
+    # Map transport names
+    transport_map = {
+        "stdio": "stdio",
+        "http": "streamable-http",
+        "sse": "sse",
+    }
+    transport = transport_map[args.transport]
+
+    logger.info(
+        f"Starting DocVector MCP server",
+        mode=args.mode,
+        transport=transport,
+        cloud_enabled=get_mcp_config().is_cloud_enabled,
+    )
+
+    # Print startup info to stderr (so it doesn't interfere with stdio transport)
+    if args.transport == "stdio":
+        import sys
+        print(f"DocVector MCP Server v{settings.app_version}", file=sys.stderr)
+        print(f"Mode: {args.mode}", file=sys.stderr)
+        print(f"Transport: {transport}", file=sys.stderr)
+        print("Ready for connections...", file=sys.stderr)
 
     # Run the server
     mcp.run(transport=transport)

@@ -1229,26 +1229,47 @@ def serve(
 
 @app.command()
 def mcp(
-    transport: str = typer.Option("stdio", "--transport", "-t", help="Transport mode: stdio, http, sse"),
+    mode: str = typer.Option("local", "--mode", "-m", help="Operating mode: local, cloud, hybrid"),
+    transport: str = typer.Option("stdio", "--transport", "-t", help="Transport protocol: stdio, http, sse"),
+    api_key: Optional[str] = typer.Option(None, "--api-key", "-k", help="DocVector Cloud API key"),
+    api_url: Optional[str] = typer.Option(None, "--api-url", help="DocVector Cloud API URL"),
 ):
     """Start the MCP server.
 
     Runs the Model Context Protocol server for AI code editor integration.
+    Supports three modes:
+
+    - local: All data stays on your machine (default, fully private)
+    - cloud: Connect to DocVector Cloud for community Q&A
+    - hybrid: Local docs + cloud Q&A (recommended)
 
     Examples:
-        docvector mcp                    # stdio for Claude Desktop
-        docvector mcp --transport http   # HTTP for web clients
+        docvector mcp                              # Local mode, stdio transport
+        docvector mcp --mode hybrid --api-key xxx  # Hybrid mode with cloud
+        docvector mcp --transport http             # HTTP for web clients
     """
-    from docvector.mcp.server import mcp as mcp_server
+    from docvector.mcp.server import mcp as mcp_server, set_mcp_config
 
     console.print(f"[bold blue]Starting DocVector MCP server[/]")
+    console.print(f"  Mode: {mode}")
     console.print(f"  Transport: {transport}")
 
-    if transport == "stdio":
-        console.print("  Mode: stdio (for Claude Desktop, Cursor, etc.)\n")
-    elif transport == "http":
-        console.print("  Mode: HTTP (streamable)\n")
+    if mode == "local":
+        console.print("  [dim]All data stays on your machine - fully private[/dim]")
+    elif mode == "cloud":
+        console.print("  [dim]Connected to DocVector Cloud for community Q&A[/dim]")
+    elif mode == "hybrid":
+        console.print("  [dim]Local docs + cloud Q&A - best of both worlds[/dim]")
 
+    if mode in ("cloud", "hybrid") and not api_key:
+        console.print("  [yellow]Warning: No API key provided - cloud features limited[/yellow]")
+
+    console.print()
+
+    # Configure MCP mode
+    set_mcp_config(mode=mode, api_url=api_url, api_key=api_key)
+
+    # Run the server
     mcp_server.run(transport=transport if transport != "http" else "streamable-http")
 
 
