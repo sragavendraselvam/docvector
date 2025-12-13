@@ -7,6 +7,9 @@ Usage:
     docvector mcp                      Start the MCP server
     docvector libraries list           List indexed libraries
     docvector sources list             List configured sources
+    docvector models list              List available embedding models
+    docvector models info <model>      Show model details
+    docvector models recommend         Get model recommendation
 """
 
 import asyncio
@@ -333,6 +336,179 @@ def list_sources(
             console.print(table)
 
     run_async(_list())
+
+
+# =============================================================================
+# MODELS COMMANDS
+# =============================================================================
+
+models_app = typer.Typer(help="Manage embedding models")
+app.add_typer(models_app, name="models")
+
+
+@models_app.command("list")
+def list_models_cmd(
+    provider: Optional[str] = typer.Option(
+        None, "--provider", "-p", help="Filter by provider (sentence-transformers, openai)"
+    ),
+    speed: Optional[str] = typer.Option(
+        None, "--speed", "-s", help="Filter by speed (fast, medium, slow)"
+    ),
+):
+    """List available embedding models.
+
+    Shows all supported embedding models grouped by speed category.
+
+    Examples:
+        docvector models list
+        docvector models list --provider openai
+        docvector models list --speed fast
+    """
+    from docvector.embeddings import (
+        DEFAULT_MODEL,
+        EMBEDDING_MODELS,
+        ModelSpeed,
+    )
+
+    # Group models by speed
+    speed_groups = {
+        ModelSpeed.FAST: [],
+        ModelSpeed.MEDIUM: [],
+        ModelSpeed.SLOW: [],
+    }
+
+    for name, info in EMBEDDING_MODELS.items():
+        if provider and info.provider != provider:
+            continue
+        if speed and info.speed.value != speed:
+            continue
+        speed_groups[info.speed].append((name, info))
+
+    console.print("\n[bold]Available Embedding Models[/]\n")
+
+    speed_labels = {
+        ModelSpeed.FAST: ("FAST MODELS (< 100ms)", "green"),
+        ModelSpeed.MEDIUM: ("MEDIUM MODELS (100-500ms)", "yellow"),
+        ModelSpeed.SLOW: ("LARGE MODELS (> 500ms)", "red"),
+    }
+
+    total_shown = 0
+    for speed_cat in [ModelSpeed.FAST, ModelSpeed.MEDIUM, ModelSpeed.SLOW]:
+        models = speed_groups[speed_cat]
+        if not models:
+            continue
+
+        label, color = speed_labels[speed_cat]
+        console.print(f"[bold {color}]{label}[/bold {color}]")
+        console.print("─" * len(label))
+
+        for name, info in models:
+            default_tag = " [yellow][DEFAULT][/yellow]" if name == DEFAULT_MODEL else ""
+            console.print(f"  [green]{name}[/green]{default_tag}")
+            console.print(
+                f"    Dimension: {info.dimension} │ Memory: {info.memory_mb}MB │ Quality: {info.quality.value}"
+            )
+            console.print(f"    [dim]{info.description}[/dim]")
+            console.print()
+            total_shown += 1
+
+    if total_shown == 0:
+        console.print("[yellow]No models match the specified filters.[/]")
+    else:
+        console.print(
+            "[dim]Use 'docvector models info <model>' for detailed information.[/dim]"
+        )
+
+
+@models_app.command("info")
+def model_info_cmd(
+    model_name: str = typer.Argument(..., help="Model name to show info for"),
+):
+    """Show detailed information about a model.
+
+    Displays all metadata for a specific embedding model.
+
+    Examples:
+        docvector models info sentence-transformers/all-MiniLM-L6-v2
+        docvector models info BAAI/bge-base-en-v1.5
+    """
+    from docvector.embeddings import get_model_info
+
+    info = get_model_info(model_name)
+
+    if not info:
+        console.print(f"[red]Model '{model_name}' not found in registry.[/red]")
+        console.print(
+            "[dim]Use 'docvector models list' to see available models.[/dim]"
+        )
+        raise typer.Exit(1)
+
+    console.print(f"\n[bold]Model: {model_name}[/bold]")
+    console.print("=" * (len(model_name) + 7))
+
+    table = Table(show_header=False, box=None, padding=(0, 2))
+    table.add_column("Key", style="cyan")
+    table.add_column("Value")
+
+    table.add_row("Provider", info.provider)
+    table.add_row("Dimension", str(info.dimension))
+    table.add_row("Speed", info.speed.value)
+    table.add_row("Quality", info.quality.value)
+    table.add_row("Memory", f"~{info.memory_mb} MB")
+    table.add_row("Max Tokens", str(info.max_tokens))
+
+    console.print(table)
+
+    console.print(f"\n[bold]Description:[/bold]")
+    console.print(f"  {info.description}")
+
+    console.print(f"\n[bold]Recommended For:[/bold]")
+    for use_case in info.use_cases:
+        console.print(f"  • {use_case}")
+
+    console.print(f"\n[bold]Configuration:[/bold]")
+    console.print(f"  export DOCVECTOR_EMBEDDING_MODEL={model_name}")
+    console.print()
+
+
+@models_app.command("recommend")
+def recommend_model_cmd(
+    use_case: str = typer.Option(
+        "general",
+        "--use-case",
+        "-u",
+        help="Use case: general, technical, code, documentation, production, high-precision",
+    ),
+):
+    """Get a model recommendation for your use case.
+
+    Suggests the best model based on your specific needs.
+
+    Examples:
+        docvector models recommend
+        docvector models recommend --use-case technical
+        docvector models recommend --use-case code
+    """
+    from docvector.embeddings import get_model_info, get_recommended_model
+
+    model_name = get_recommended_model(use_case)
+    info = get_model_info(model_name)
+
+    console.print(f"\n[bold]Recommended Model for '{use_case}' Use Case[/bold]")
+    console.print("=" * 45)
+
+    console.print(f"\n  [bold green]Model: {model_name}[/bold green]")
+
+    if info:
+        console.print(f"\n  [bold]Why this model:[/bold]")
+        console.print(f"    • Quality: {info.quality.value}")
+        console.print(f"    • Speed: {info.speed.value}")
+        console.print(f"    • Memory: ~{info.memory_mb}MB")
+        console.print(f"    • {info.description}")
+
+    console.print(f"\n  [bold]To use this model:[/bold]")
+    console.print(f"    export DOCVECTOR_EMBEDDING_MODEL={model_name}")
+    console.print()
 
 
 # =============================================================================
