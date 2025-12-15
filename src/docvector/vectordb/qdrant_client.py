@@ -159,9 +159,17 @@ class QdrantVectorDB(IVectorStore):
 
         try:
             await self.client.delete_collection(collection_name=name)
-        except Exception:
-             # Look for not found error
-             raise ValueError(f"Collection {name} does not exist")
+        except UnexpectedResponse as e:
+            # Check for not found error (404)
+            status_code = getattr(e, 'status_code', None)
+            if status_code is None and hasattr(e, 'response'):
+                status_code = getattr(e.response, 'status_code', None)
+
+            if status_code == 404 or "not found" in str(e).lower():
+                raise ValueError(f"Collection {name} does not exist")
+            raise RuntimeError(f"Failed to delete collection {name}: {e}")
+        except Exception as e:
+            raise RuntimeError(f"Failed to delete collection {name}: {e}")
     
     async def collection_exists(self, name: str) -> bool:
         if not self.client:
