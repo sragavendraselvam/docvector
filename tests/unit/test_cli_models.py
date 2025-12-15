@@ -1,6 +1,5 @@
 """Tests for CLI models commands."""
 
-import pytest
 from typer.testing import CliRunner
 
 from docvector.cli import app
