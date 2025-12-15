@@ -194,18 +194,35 @@ def mcp(
     Examples:
         docvector mcp                    # stdio for Claude Desktop
         docvector mcp --transport http   # HTTP for web clients
+        docvector mcp --transport sse    # SSE for streaming clients
     """
+    import sys
+
     from docvector.mcp.server import mcp as mcp_server
 
-    console.print(f"[bold blue]Starting DocVector MCP server[/]")
-    console.print(f"  Transport: {transport}")
+    # Map transport aliases
+    transport_map = {
+        "http": "streamable-http",
+        "stdio": "stdio",
+        "sse": "sse",
+    }
 
-    if transport == "stdio":
-        console.print("  Mode: stdio (for Claude Desktop, Cursor, etc.)\n")
-    elif transport == "http":
-        console.print("  Mode: HTTP (streamable)\n")
+    effective_transport = transport_map.get(transport, transport)
 
-    mcp_server.run(transport=transport if transport != "http" else "streamable-http")
+    # Only print status for non-stdio transports (stdio uses stdout for protocol)
+    if transport != "stdio":
+        console.print(f"[bold blue]Starting DocVector MCP server[/]")
+        console.print(f"  Transport: {effective_transport}")
+
+        if transport == "http":
+            console.print("  Mode: HTTP (streamable)\n")
+        elif transport == "sse":
+            console.print("  Mode: SSE (server-sent events)\n")
+    else:
+        # For stdio, log to stderr so it doesn't interfere with the protocol
+        print("Starting DocVector MCP server (stdio)", file=sys.stderr)
+
+    mcp_server.run(transport=effective_transport)
 
 
 # =============================================================================
