@@ -141,6 +141,58 @@ class TestCreateEmbedder:
         with pytest.raises(ValueError, match="Unknown model"):
             create_embedder(model="invalid-model-name")
 
+    def test_create_embedder_auto_detects_openai_provider(self, mocker):
+        """Should auto-detect OpenAI provider from model name."""
+        from docvector.embeddings import OpenAIEmbedder, create_embedder
+
+        # Mock the OpenAI API key in settings
+        mocker.patch("docvector.embeddings.openai_embedder.settings.openai_api_key", "test-key")
+
+        # Using model from registry - should auto-detect openai provider
+        embedder = create_embedder(model="text-embedding-3-small")
+        assert isinstance(embedder, OpenAIEmbedder)
+
+    def test_create_embedder_auto_detects_local_provider(self):
+        """Should auto-detect local provider from model name."""
+        from docvector.embeddings import LocalEmbedder, create_embedder
+
+        # Using model from registry - should auto-detect local provider
+        embedder = create_embedder(model="BAAI/bge-base-en-v1.5")
+        assert isinstance(embedder, LocalEmbedder)
+
+    def test_create_embedder_openai_model_with_local_provider_raises(self):
+        """Should raise error when OpenAI model used with local provider."""
+        from docvector.embeddings import create_embedder
+
+        with pytest.raises(ValueError, match="OpenAI model but provider='local'"):
+            create_embedder(provider="local", model="text-embedding-3-small")
+
+    def test_create_embedder_local_model_with_openai_provider_raises(self):
+        """Should raise error when local model used with OpenAI provider."""
+        from docvector.embeddings import create_embedder
+
+        with pytest.raises(ValueError, match="local model but provider='openai'"):
+            create_embedder(provider="openai", model="BAAI/bge-base-en-v1.5")
+
+    def test_create_embedder_openai_model_pattern_auto_detect(self, mocker):
+        """Should auto-detect OpenAI from text-embedding-* pattern even if not in registry."""
+        from docvector.embeddings import OpenAIEmbedder, create_embedder
+
+        # Mock the OpenAI API key in settings
+        mocker.patch("docvector.embeddings.openai_embedder.settings.openai_api_key", "test-key")
+
+        # Using pattern matching for unregistered OpenAI model
+        embedder = create_embedder(model="text-embedding-3-large")
+        assert isinstance(embedder, OpenAIEmbedder)
+
+    def test_create_embedder_compatible_provider_model(self):
+        """Should work when provider matches model type."""
+        from docvector.embeddings import LocalEmbedder, create_embedder
+
+        # Explicitly specifying matching provider should work
+        embedder = create_embedder(provider="local", model="BAAI/bge-small-en-v1.5")
+        assert isinstance(embedder, LocalEmbedder)
+
 
 class TestGetEmbedderInfo:
     """Tests for get_embedder_info function."""
