@@ -261,9 +261,10 @@ class TestChromaVectorDB:
             score_threshold=0.8
         )
 
-        # Should only return the very similar vector
-        assert len(results) >= 1
-        assert all(r.score >= 0.8 for r in results)
+        # Should only return the very similar vector (exact match)
+        assert len(results) == 1
+        assert results[0].id == "vec1"
+        assert results[0].score >= 0.8
 
     @pytest.mark.asyncio
     async def test_search_with_filters(self, vectordb):
