@@ -74,17 +74,9 @@ def init(
             console.print(f"  Created ChromaDB directory: {chroma_dir}")
 
             # Determine DB URL
+            # SQLAlchemy accepts forward slashes on all platforms (Windows, Linux, macOS)
             db_path = sqlite_dir / "docvector.db"
-            db_url = f"sqlite+aiosqlite:///{db_path}" # Absolute path in URL
-            # Note: For windows absolute paths in URL might need 4 slashes?
-            # SQLAlchemy: sqlite+aiosqlite:///C:/path/to/db
-            # On windows Path.resolve() returns C:\path...
-            # We need to handle this.
-
-            # Simple hack for URL format
-            if os.name == 'nt':
-                 # On windows, db_path has backslashes.
-                 db_url = f"sqlite+aiosqlite:///{db_path.as_posix()}"
+            db_url = f"sqlite+aiosqlite:///{db_path.as_posix()}"
 
             # Write .env if not exists
             env_path = Path(".env")
