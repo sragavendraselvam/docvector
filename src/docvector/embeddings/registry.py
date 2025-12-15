@@ -130,6 +130,16 @@ EMBEDDING_MODELS: Dict[str, EmbeddingModelInfo] = {
         provider="openai",
         use_cases=["high-precision", "production", "multilingual"],
     ),
+    "text-embedding-ada-002": EmbeddingModelInfo(
+        name="text-embedding-ada-002",
+        dimension=1536,
+        speed=ModelSpeed.FAST,
+        quality=ModelQuality.GOOD,
+        memory_mb=0,
+        description="OpenAI's legacy embedding model. Consider using text-embedding-3-small instead.",
+        provider="openai",
+        use_cases=["legacy", "compatibility"],
+    ),
 }
 
 # Default model
@@ -165,10 +175,6 @@ def get_model_dimension(model_name: str) -> int:
     info = get_model_info(model_name)
     if info:
         return info.dimension
-
-    # Legacy OpenAI model
-    if model_name == "text-embedding-ada-002":
-        return 1536
 
     # Default fallback for unknown models
     return 384
