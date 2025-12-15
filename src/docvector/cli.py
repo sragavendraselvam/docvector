@@ -57,26 +57,62 @@ def index(
         docvector index https://docs.python.org/3/ --library python/docs --depth 2
     """
     async def _index():
+        from urllib.parse import urlparse
+
         from docvector.db import get_db_session
+        from docvector.models import Library, Source
         from docvector.services.ingestion_service import IngestionService
 
         console.print(f"[bold blue]Indexing:[/] {url}")
         console.print(f"  Max depth: {max_depth}, Max pages: {max_pages}")
+        if library_id:
+            console.print(f"  Library: {library_id}")
 
         async with get_db_session() as db:
+            # Create or get library if specified
+            library = None
+            if library_id:
+                from docvector.services.library_service import LibraryService
+
+                library_service = LibraryService(db)
+                library = await library_service.get_library_by_id(library_id)
+                if not library:
+                    # Create new library
+                    parsed = urlparse(url)
+                    library = Library(
+                        library_id=library_id,
+                        name=library_id.replace("/", " ").replace("-", " ").title(),
+                        homepage_url=f"{parsed.scheme}://{parsed.netloc}",
+                    )
+                    db.add(library)
+                    await db.flush()
+
+            # Create a temporary source for this crawl
+            parsed = urlparse(url)
+            source = Source(
+                name=f"CLI crawl: {parsed.netloc}",
+                type="web",
+                config={
+                    "start_url": url,
+                    "max_depth": max_depth,
+                    "max_pages": max_pages,
+                },
+                library_id=library.id if library else None,
+            )
+            db.add(source)
+            await db.flush()
+
             ingestion_service = IngestionService(db)
 
             with console.status("[bold green]Crawling and indexing..."):
-                result = await ingestion_service.ingest_url(
-                    url=url,
-                    library_id=library_id,
-                    max_depth=max_depth,
-                    max_pages=max_pages,
-                )
+                result = await ingestion_service.ingest_source(source=source)
+
+            await db.commit()
 
             console.print(f"\n[bold green]✓ Indexing complete![/]")
-            console.print(f"  Documents: {result.get('documents_indexed', 0)}")
-            console.print(f"  Chunks: {result.get('chunks_created', 0)}")
+            console.print(f"  Documents fetched: {result.get('fetched', 0)}")
+            console.print(f"  Documents processed: {result.get('processed', 0)}")
+            console.print(f"  Errors: {result.get('errors', 0)}")
 
     run_async(_index())
 
