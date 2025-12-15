@@ -1,7 +1,5 @@
 """Tests for core.py Settings class."""
 
-from pathlib import Path
-
 import pytest
 
 
