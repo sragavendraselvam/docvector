@@ -99,7 +99,7 @@ class TestChromaVectorDB:
         """Test creating collection that already exists."""
         await vectordb.create_collection("test_dup", dimension=384)
 
-        with pytest.raises(RuntimeError, match="already exists"):
+        with pytest.raises(ValueError, match="already exists"):
             await vectordb.create_collection("test_dup", dimension=384)
 
     @pytest.mark.asyncio
