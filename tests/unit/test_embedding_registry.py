@@ -1,7 +1,5 @@
 """Tests for embedding model registry."""
 
-import pytest
-
 from docvector.embeddings.registry import (
     DEFAULT_MODEL,
     EMBEDDING_MODELS,
