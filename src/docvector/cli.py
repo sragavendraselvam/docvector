@@ -406,7 +406,7 @@ def list_models_cmd(
     speed_labels = {
         ModelSpeed.FAST: ("FAST MODELS (< 100ms)", "green"),
         ModelSpeed.MEDIUM: ("MEDIUM MODELS (100-500ms)", "yellow"),
-        ModelSpeed.SLOW: ("LARGE MODELS (> 500ms)", "red"),
+        ModelSpeed.SLOW: ("SLOW MODELS (> 500ms)", "red"),
     }
 
     total_shown = 0
