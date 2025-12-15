@@ -114,7 +114,7 @@ class TestChromaVectorDB:
     @pytest.mark.asyncio
     async def test_delete_nonexistent_collection(self, vectordb):
         """Test deleting collection that doesn't exist."""
-        with pytest.raises(RuntimeError, match="does not exist"):
+        with pytest.raises(ValueError, match="does not exist"):
             await vectordb.delete_collection("nonexistent")
 
     @pytest.mark.asyncio
@@ -193,7 +193,7 @@ class TestChromaVectorDB:
         """Test upserting to nonexistent collection."""
         records = [VectorRecord(id="vec1", vector=[0.1, 0.2, 0.3], payload={})]
 
-        with pytest.raises(RuntimeError, match="does not exist"):
+        with pytest.raises(ValueError, match="does not exist"):
             await vectordb.upsert("nonexistent", records)
 
     @pytest.mark.asyncio
@@ -304,7 +304,7 @@ class TestChromaVectorDB:
     @pytest.mark.asyncio
     async def test_search_nonexistent_collection(self, vectordb):
         """Test searching in nonexistent collection."""
-        with pytest.raises(RuntimeError, match="does not exist"):
+        with pytest.raises(ValueError, match="does not exist"):
             await vectordb.search(
                 collection="nonexistent",
                 query_vector=[0.1, 0.2, 0.3],
@@ -369,7 +369,7 @@ class TestChromaVectorDB:
     @pytest.mark.asyncio
     async def test_count_nonexistent_collection(self, vectordb):
         """Test counting nonexistent collection."""
-        with pytest.raises(RuntimeError, match="does not exist"):
+        with pytest.raises(ValueError, match="does not exist"):
             await vectordb.count("nonexistent")
 
     @pytest.mark.asyncio
