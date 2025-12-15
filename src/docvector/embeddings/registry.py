@@ -39,7 +39,7 @@ class EmbeddingModelInfo:
 # Registry of supported models
 EMBEDDING_MODELS: Dict[str, EmbeddingModelInfo] = {
     # ============================================================
-    # FAST MODELS (< 200MB memory)
+    # FAST MODELS (< 100ms per batch)
     # ============================================================
     "sentence-transformers/all-MiniLM-L6-v2": EmbeddingModelInfo(
         name="all-MiniLM-L6-v2",
@@ -62,7 +62,7 @@ EMBEDDING_MODELS: Dict[str, EmbeddingModelInfo] = {
         use_cases=["technical", "code", "documentation"],
     ),
     # ============================================================
-    # MEDIUM MODELS (200-500MB memory)
+    # MEDIUM MODELS (100-500ms per batch)
     # ============================================================
     "sentence-transformers/all-mpnet-base-v2": EmbeddingModelInfo(
         name="all-mpnet-base-v2",
@@ -95,7 +95,7 @@ EMBEDDING_MODELS: Dict[str, EmbeddingModelInfo] = {
         use_cases=["long-documents", "technical", "academic"],
     ),
     # ============================================================
-    # LARGE MODELS (> 500MB memory)
+    # SLOW MODELS (> 500ms per batch)
     # ============================================================
     "BAAI/bge-large-en-v1.5": EmbeddingModelInfo(
         name="bge-large-en-v1.5",
