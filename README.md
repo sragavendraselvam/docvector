@@ -14,6 +14,7 @@ DocVector enables semantic search across your documentation by combining vector 
 - **Production Ready** - Redis caching, connection pooling, and health monitoring
 - **RESTful API** - Clean API with automatic OpenAPI documentation
 - **Flexible Storage** - SQLite for development, PostgreSQL for production
+- **Dual Vector DB Support** - ChromaDB for local/embedded, Qdrant for cloud/production
 
 ## Table of Contents
 
@@ -46,9 +47,11 @@ That's it! The API will be available at `http://localhost:8000`.
 ### Requirements
 
 - **Python 3.9+**
-- **Redis** - For caching embeddings and search results
-- **Qdrant** - Vector database for similarity search
-- **PostgreSQL** (optional) - For production deployments
+- **Vector Database** (choose one):
+  - **ChromaDB** - Embedded vector database for local deployments (included by default, no setup needed)
+  - **Qdrant** - Vector database for cloud/production deployments
+- **Redis** (optional) - For caching embeddings and search results (cloud mode)
+- **PostgreSQL** (optional) - For production deployments (cloud mode)
 
 ### Step-by-Step Setup
 
@@ -69,7 +72,17 @@ pip install -e .
 pip install -e ".[dev]"
 ```
 
-#### 2. Start External Services
+#### 2. Start External Services (Optional for Local Mode)
+
+DocVector supports two deployment modes:
+
+**Local Mode (Default)** - No external services needed!
+- Uses embedded ChromaDB for vector storage (included in dependencies)
+- Uses SQLite for metadata storage
+- Perfect for development, testing, and air-gapped environments
+- Simply skip this step and proceed to configuration
+
+**Cloud/Production Mode** - Requires external services:
 
 **Option A: Docker Compose (Recommended)**
 
@@ -133,16 +146,38 @@ Configuration is managed through environment variables with the `DOCVECTOR_` pre
 
 ### Essential Settings
 
+**Local Mode (Default):**
 ```bash
+# MCP Mode (local = embedded ChromaDB, cloud = Qdrant)
+DOCVECTOR_MCP_MODE=local
+
 # Database
 DOCVECTOR_DATABASE_URL=sqlite+aiosqlite:///./docvector.db
+
+# ChromaDB (local vector database)
+DOCVECTOR_CHROMA_PERSIST_DIRECTORY=./data/chroma
+DOCVECTOR_CHROMA_COLLECTION=documents
+
+# Embeddings
+DOCVECTOR_EMBEDDING_PROVIDER=local
+DOCVECTOR_EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
+```
+
+**Cloud/Production Mode:**
+```bash
+# MCP Mode
+DOCVECTOR_MCP_MODE=cloud
+
+# Database
+DOCVECTOR_DATABASE_URL=postgresql+asyncpg://user:password@localhost:5432/docvector
 
 # Redis
 DOCVECTOR_REDIS_URL=redis://localhost:6379/0
 
-# Qdrant
+# Qdrant (cloud vector database)
 DOCVECTOR_QDRANT_HOST=localhost
 DOCVECTOR_QDRANT_PORT=6333
+DOCVECTOR_QDRANT_COLLECTION=documents
 
 # Embeddings
 DOCVECTOR_EMBEDDING_PROVIDER=local
@@ -453,21 +488,40 @@ docvector/
 └─────────────────────────────────────┘
        │           │           │
        ▼           ▼           ▼
-┌──────────┐ ┌─────────┐ ┌─────────┐
-│PostgreSQL│ │ Qdrant  │ │  Redis  │
-│/SQLite   │ │(Vectors)│ │ (Cache) │
-└──────────┘ └─────────┘ └─────────┘
+┌──────────┐ ┌──────────────┐ ┌─────────┐
+│PostgreSQL│ │ ChromaDB/    │ │  Redis  │
+│/SQLite   │ │ Qdrant       │ │ (Cache) │
+│(Metadata)│ │ (Vectors)    │ │(Optional)│
+└──────────┘ └──────────────┘ └─────────┘
 ```
 
 ### Key Components
 
 - **API Layer**: FastAPI with automatic OpenAPI docs
 - **Search Engine**: Hybrid search combining vector and keyword approaches
-- **Embedding Service**: Pluggable providers (local or OpenAI)
-- **Vector Store**: Qdrant for efficient similarity search
-- **Cache Layer**: Redis for embedding and result caching
-- **Database**: SQLAlchemy with async support (SQLite/PostgreSQL)
+- **Embedding Service**: Pluggable providers (local sentence-transformers or OpenAI)
+- **Vector Store**: ChromaDB (local/embedded) or Qdrant (cloud/production)
+- **Cache Layer**: Redis for embedding and result caching (optional, cloud mode only)
+- **Database**: SQLAlchemy with async support (SQLite for local, PostgreSQL for cloud)
 - **Ingestion Pipeline**: Web crawler → Parser → Chunker → Embedder
+
+### Vector Database Modes
+
+DocVector supports two vector database backends:
+
+**ChromaDB (Local Mode)**
+- Embedded, no separate server required
+- Stores data in local filesystem (`./data/chroma` by default)
+- Perfect for development, testing, and air-gapped deployments
+- Lower resource usage, simpler setup
+- Suitable for small to medium datasets (< 1M vectors)
+
+**Qdrant (Cloud/Production Mode)**
+- Client-server architecture with remote connections
+- Supports cloud hosting and horizontal scaling
+- Advanced features: distributed search, replication, snapshots
+- Better performance for large datasets (> 1M vectors)
+- Recommended for production deployments
 
 ## Deployment
 

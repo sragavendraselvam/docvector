@@ -11,6 +11,8 @@ Usage:
 
 import asyncio
 from typing import Optional
+from pathlib import Path
+import os
 
 import typer
 from rich.console import Console
@@ -31,6 +33,79 @@ app = typer.Typer(
 def run_async(coro):
     """Run an async function in the event loop."""
     return asyncio.get_event_loop().run_until_complete(coro)
+
+
+# =============================================================================
+# INIT COMMAND
+# =============================================================================
+
+@app.command()
+def init(
+    mode: str = typer.Option("local", "--mode", "-m", help="Operating mode: local, cloud, hybrid"),
+    data_dir: str = typer.Option("./data", "--data-dir", "-d", help="Data directory"),
+):
+    """Initialize DocVector configuration and directories.
+    
+    Creates necessary directories and configuration files for the selected mode.
+    
+    Examples:
+        docvector init
+        docvector init --mode hybrid
+    """
+    
+    console.print(f"[bold blue]Initializing DocVector in {mode} mode...[/]")
+    
+    # Resolve absolute path
+    data_path = Path(data_dir).resolve()
+    
+    try:
+        data_path.mkdir(parents=True, exist_ok=True)
+        console.print(f"  Created data directory: {data_path}")
+        
+        if mode == "local":
+            # Create subdirs
+            sqlite_dir = data_path / "sqlite"
+            chroma_dir = data_path / "chroma"
+
+            sqlite_dir.mkdir(exist_ok=True)
+            chroma_dir.mkdir(exist_ok=True)
+
+            console.print(f"  Created SQLite directory: {sqlite_dir}")
+            console.print(f"  Created ChromaDB directory: {chroma_dir}")
+
+            # Determine DB URL
+            db_path = sqlite_dir / "docvector.db"
+            db_url = f"sqlite+aiosqlite:///{db_path}" # Absolute path in URL
+            # Note: For windows absolute paths in URL might need 4 slashes?
+            # SQLAlchemy: sqlite+aiosqlite:///C:/path/to/db
+            # On windows Path.resolve() returns C:\path...
+            # We need to handle this.
+
+            # Simple hack for URL format
+            if os.name == 'nt':
+                 # On windows, db_path has backslashes.
+                 db_url = f"sqlite+aiosqlite:///{db_path.as_posix()}"
+
+            # Write .env if not exists
+            env_path = Path(".env")
+            if not env_path.exists():
+                with open(env_path, "w", encoding="utf-8") as f:
+                    f.write(f"DOCVECTOR_MCP_MODE={mode}\n")
+                    f.write(f"DOCVECTOR_DATABASE_URL={db_url}\n")
+                    f.write(f"DOCVECTOR_CHROMA_PERSIST_DIRECTORY={chroma_dir.as_posix()}\n")
+                    f.write(f"DOCVECTOR_EMBEDDING_PROVIDER=local\n")
+                    f.write(f"# Add other settings as needed\n")
+
+                console.print(f"[green]✓ Created .env configuration[/]")
+            else:
+                console.print(f"[yellow]! .env already exists, skipping creation[/]")
+                
+    except Exception as e:
+        console.print(f"[bold red]Initialization failed:[/] {e}")
+        raise typer.Exit(1)
+    
+    console.print(f"\n[bold green]Initialization complete![/]")
+    console.print(f"Run 'docvector serve' or 'docvector mcp' to start.")
 
 
 # =============================================================================

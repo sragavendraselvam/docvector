@@ -73,7 +73,11 @@ class Settings(BaseSettings):
     redis_url: str = Field(default="redis://localhost:6379/0")
     redis_max_connections: int = Field(default=10)
 
-    # Qdrant
+    # Vector Database - ChromaDB (local mode)
+    chroma_persist_directory: str = Field(default="./data/chroma")
+    chroma_collection: str = Field(default="documents")
+
+    # Vector Database - Qdrant (cloud/hybrid mode)
     qdrant_host: str = Field(default="localhost")
     qdrant_port: int = Field(default=6333)
     qdrant_grpc_port: int = Field(default=6334)
