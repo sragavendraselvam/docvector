@@ -234,7 +234,9 @@ class TestSQLiteAutoCreation:
     @pytest.mark.asyncio
     async def test_sqlite_directory_creation_graceful_failure(self, temp_dir, monkeypatch):
         """Test that SQLite directory creation failure is handled gracefully."""
-        from docvector.db import get_engine
+        import docvector.db as db_module
+        import docvector.core as core_module
+        import importlib
 
         # Use an invalid path that will fail to create
         db_url = "sqlite+aiosqlite:////root/forbidden/test.db"
@@ -243,17 +245,14 @@ class TestSQLiteAutoCreation:
         monkeypatch.setenv("DOCVECTOR_DATABASE_URL", db_url)
 
         # Reload settings to pick up new env var
-        import docvector.core as core_module
-        import importlib
         importlib.reload(core_module)
 
         # Clear any existing engine
-        import docvector.db as db_module
         db_module._engine = None
 
         # Get engine (should not crash even if directory creation fails)
         try:
-            engine = get_engine()
+            engine = db_module.get_engine()
             # Should succeed even if directory creation failed
             # (SQLAlchemy will fail later when trying to actually use the DB)
             assert engine is not None
