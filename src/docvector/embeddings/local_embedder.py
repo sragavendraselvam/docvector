@@ -63,6 +63,20 @@ class LocalEmbedder(BaseEmbedder):
         # Get model info if registered
         self._model_info = get_model_info(self.model_name)
 
+        # Reject OpenAI models - they require OpenAIEmbedder
+        if self._model_info and self._model_info.provider == "openai":
+            raise ValueError(
+                f"Model '{self.model_name}' is an OpenAI model and cannot be used with LocalEmbedder. "
+                f"Use OpenAIEmbedder instead, or use create_embedder() which auto-detects the provider."
+            )
+
+        # Also reject models matching OpenAI naming pattern (not in registry)
+        if self.model_name.startswith("text-embedding-"):
+            raise ValueError(
+                f"Model '{self.model_name}' appears to be an OpenAI model and cannot be used with LocalEmbedder. "
+                f"Use OpenAIEmbedder instead, or use create_embedder() which auto-detects the provider."
+            )
+
         if self._model_info:
             logger.info(
                 "Using registered model",

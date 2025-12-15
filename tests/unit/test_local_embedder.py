@@ -125,17 +125,35 @@ class TestModelNotLoaded:
 
 
 class TestOpenAIModelValidation:
-    """Tests for OpenAI model patterns."""
+    """Tests for OpenAI model rejection in LocalEmbedder."""
 
-    def test_openai_model_pattern_valid(self):
-        """OpenAI model patterns should be valid for LocalEmbedder init.
+    def test_openai_registered_model_rejected(self):
+        """OpenAI models from registry should be rejected."""
+        with pytest.raises(ValueError, match="OpenAI model"):
+            LocalEmbedder(model_name="text-embedding-ada-002")
 
-        Note: They won't actually work with sentence-transformers,
-        but the validation should pass.
-        """
-        # These should not raise at init (validation passes)
-        embedder = LocalEmbedder(model_name="text-embedding-ada-002")
-        assert embedder._model_info is None
+    def test_openai_model_3_small_rejected(self):
+        """text-embedding-3-small should be rejected."""
+        with pytest.raises(ValueError, match="OpenAI model"):
+            LocalEmbedder(model_name="text-embedding-3-small")
+
+    def test_openai_model_3_large_rejected(self):
+        """text-embedding-3-large should be rejected."""
+        with pytest.raises(ValueError, match="OpenAI model"):
+            LocalEmbedder(model_name="text-embedding-3-large")
+
+    def test_openai_pattern_unregistered_rejected(self):
+        """Unregistered text-embedding-* patterns should be rejected."""
+        with pytest.raises(ValueError, match="appears to be an OpenAI model"):
+            LocalEmbedder(model_name="text-embedding-future-model")
+
+    def test_error_message_suggests_alternatives(self):
+        """Error message should suggest using OpenAIEmbedder or create_embedder."""
+        with pytest.raises(ValueError, match="OpenAIEmbedder"):
+            LocalEmbedder(model_name="text-embedding-3-small")
+
+        with pytest.raises(ValueError, match="create_embedder"):
+            LocalEmbedder(model_name="text-embedding-3-small")
 
 
 class TestMultipleModels:
