@@ -166,10 +166,8 @@ class QdrantVectorDB(IVectorStore):
                 status_code = getattr(e.response, 'status_code', None)
 
             if status_code == 404 or "not found" in str(e).lower():
-                raise ValueError(f"Collection {name} does not exist")
-            raise RuntimeError(f"Failed to delete collection {name}: {e}")
-        except Exception as e:
-            raise RuntimeError(f"Failed to delete collection {name}: {e}")
+                raise ValueError(f"Collection {name} does not exist") from e
+            raise RuntimeError(f"Failed to delete collection {name}: {e}") from e
     
     async def collection_exists(self, name: str) -> bool:
         if not self.client:

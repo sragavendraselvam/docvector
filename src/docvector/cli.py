@@ -73,8 +73,10 @@ def init(
             console.print(f"  Created SQLite directory: {sqlite_dir}")
             console.print(f"  Created ChromaDB directory: {chroma_dir}")
 
-            # Determine DB URL
-            # SQLAlchemy accepts forward slashes on all platforms (Windows, Linux, macOS)
+            # Generate SQLite database URL
+            # SQLite URLs require forward slashes, even on Windows.
+            # Path.as_posix() converts Windows backslashes to forward slashes.
+            # This works correctly on all platforms (Windows, Linux, macOS).
             db_path = sqlite_dir / "docvector.db"
             db_url = f"sqlite+aiosqlite:///{db_path.as_posix()}"
 
