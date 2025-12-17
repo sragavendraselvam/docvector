@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from docvector.core import get_logger
-from docvector.db import get_db_session as get_db
+from docvector.api.dependencies import get_session
 from docvector.services.library_service import LibraryService
 
 logger = get_logger(__name__)
@@ -76,7 +76,7 @@ class ResolveLibraryResponse(BaseModel):
 @router.post("/resolve", response_model=ResolveLibraryResponse)
 async def resolve_library_id(
     request: ResolveLibraryRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_session),
 ):
     """
     Resolve a library name to its Context7-compatible library ID.
@@ -115,7 +115,7 @@ async def resolve_library_id(
 async def list_libraries(
     skip: int = 0,
     limit: int = 100,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_session),
 ):
     """List all libraries."""
     try:
@@ -132,7 +132,7 @@ async def list_libraries(
 async def search_libraries(
     q: str,
     limit: int = 10,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_session),
 ):
     """Search libraries by name or description."""
     try:
@@ -148,7 +148,7 @@ async def search_libraries(
 @router.post("", response_model=LibraryResponse, status_code=201)
 async def create_library(
     request: LibraryCreate,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_session),
 ):
     """Create a new library."""
     try:
@@ -183,7 +183,7 @@ async def create_library(
 @router.get("/{library_id}", response_model=LibraryResponse)
 async def get_library(
     library_id: str,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_session),
 ):
     """Get a library by ID."""
     try:
@@ -206,7 +206,7 @@ async def get_library(
 async def update_library(
     library_id: str,
     request: LibraryUpdate,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_session),
 ):
     """Update a library."""
     try:
@@ -242,7 +242,7 @@ async def update_library(
 @router.delete("/{library_id}", status_code=204)
 async def delete_library(
     library_id: str,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_session),
 ):
     """Delete a library."""
     try:

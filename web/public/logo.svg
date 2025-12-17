@@ -1,0 +1,18 @@
+<svg width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="logoGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#06b6d4"/>
+      <stop offset="100%" stop-color="#8b5cf6"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Rounded square background -->
+  <rect x="2" y="2" width="44" height="44" rx="10" fill="url(#logoGradient)"/>
+
+  <!-- Bold D shape -->
+  <path d="M14 12h8c7.732 0 14 6.268 14 14s-6.268 14-14 14h-8V12z" fill="#ffffff"/>
+  <path d="M18 16h4c5.523 0 10 4.477 10 10s-4.477 10-10 10h-4V16z" fill="url(#logoGradient)"/>
+
+  <!-- Vector arrow pointing right -->
+  <path d="M20 26h12m0 0l-4-4m4 4l-4 4" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

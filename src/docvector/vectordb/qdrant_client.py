@@ -21,20 +21,26 @@ class QdrantVectorDB(BaseVectorDB):
         port: Optional[int] = None,
         grpc_port: Optional[int] = None,
         use_grpc: Optional[bool] = None,
+        url: Optional[str] = None,
+        api_key: Optional[str] = None,
     ):
         """
         Initialize Qdrant client.
 
         Args:
-            host: Qdrant host
+            host: Qdrant host (for local/docker deployment)
             port: Qdrant HTTP port
             grpc_port: Qdrant gRPC port
             use_grpc: Whether to use gRPC
+            url: Qdrant Cloud URL (takes precedence over host/port)
+            api_key: Qdrant Cloud API key
         """
+        self.url = url or settings.qdrant_url
+        self.api_key = api_key or settings.qdrant_api_key
         self.host = host or settings.qdrant_host
         self.port = port or settings.qdrant_port
         self.grpc_port = grpc_port or settings.qdrant_grpc_port
-        self.use_grpc = use_grpc or settings.qdrant_use_grpc
+        self.use_grpc = use_grpc if use_grpc is not None else settings.qdrant_use_grpc
 
         self.client: Optional[AsyncQdrantClient] = None
 
@@ -43,21 +49,33 @@ class QdrantVectorDB(BaseVectorDB):
         if self.client is not None:
             return
 
-        logger.info(
-            "Initializing Qdrant client",
-            host=self.host,
-            port=self.port,
-            grpc_port=self.grpc_port,
-            use_grpc=self.use_grpc,
-        )
-
-        if self.use_grpc:
+        # Use URL + API key for cloud, otherwise use host/port for local
+        if self.url and self.api_key:
+            logger.info(
+                "Initializing Qdrant Cloud client",
+                url=self.url[:50] + "..." if len(self.url) > 50 else self.url,
+            )
+            self.client = AsyncQdrantClient(
+                url=self.url,
+                api_key=self.api_key,
+            )
+        elif self.use_grpc:
+            logger.info(
+                "Initializing Qdrant client (gRPC)",
+                host=self.host,
+                grpc_port=self.grpc_port,
+            )
             self.client = AsyncQdrantClient(
                 host=self.host,
                 grpc_port=self.grpc_port,
                 prefer_grpc=True,
             )
         else:
+            logger.info(
+                "Initializing Qdrant client (HTTP)",
+                host=self.host,
+                port=self.port,
+            )
             self.client = AsyncQdrantClient(
                 host=self.host,
                 port=self.port,

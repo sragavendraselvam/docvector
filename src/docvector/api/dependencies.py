@@ -11,7 +11,7 @@ from docvector.services import SearchService, SourceService
 
 async def get_session() -> AsyncGenerator[AsyncSession, None]:
     """Get database session dependency."""
-    async for session in get_db_session():
+    async with get_db_session() as session:
         yield session
 
 
