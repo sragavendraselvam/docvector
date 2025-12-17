@@ -7,6 +7,9 @@ Usage:
     docvector mcp                      Start the MCP server
     docvector libraries list           List indexed libraries
     docvector sources list             List configured sources
+    docvector models list              List available embedding models
+    docvector models info <model>      Show model details
+    docvector models recommend         Get model recommendation
 """
 
 import asyncio
@@ -54,26 +57,62 @@ def index(
         docvector index https://docs.python.org/3/ --library python/docs --depth 2
     """
     async def _index():
+        from urllib.parse import urlparse
+
         from docvector.db import get_db_session
+        from docvector.models import Library, Source
         from docvector.services.ingestion_service import IngestionService
 
         console.print(f"[bold blue]Indexing:[/] {url}")
         console.print(f"  Max depth: {max_depth}, Max pages: {max_pages}")
+        if library_id:
+            console.print(f"  Library: {library_id}")
 
         async with get_db_session() as db:
+            # Create or get library if specified
+            library = None
+            if library_id:
+                from docvector.services.library_service import LibraryService
+
+                library_service = LibraryService(db)
+                library = await library_service.get_library_by_id(library_id)
+                if not library:
+                    # Create new library
+                    parsed = urlparse(url)
+                    library = Library(
+                        library_id=library_id,
+                        name=library_id.replace("/", " ").replace("-", " ").title(),
+                        homepage_url=f"{parsed.scheme}://{parsed.netloc}",
+                    )
+                    db.add(library)
+                    await db.flush()
+
+            # Create a temporary source for this crawl
+            parsed = urlparse(url)
+            source = Source(
+                name=f"CLI crawl: {parsed.netloc}",
+                type="web",
+                config={
+                    "start_url": url,
+                    "max_depth": max_depth,
+                    "max_pages": max_pages,
+                },
+                library_id=library.id if library else None,
+            )
+            db.add(source)
+            await db.flush()
+
             ingestion_service = IngestionService(db)
 
             with console.status("[bold green]Crawling and indexing..."):
-                result = await ingestion_service.ingest_url(
-                    url=url,
-                    library_id=library_id,
-                    max_depth=max_depth,
-                    max_pages=max_pages,
-                )
+                result = await ingestion_service.ingest_source(source=source)
+
+            await db.commit()
 
             console.print(f"\n[bold green]✓ Indexing complete![/]")
-            console.print(f"  Documents: {result.get('documents_indexed', 0)}")
-            console.print(f"  Chunks: {result.get('chunks_created', 0)}")
+            console.print(f"  Documents fetched: {result.get('fetched', 0)}")
+            console.print(f"  Documents processed: {result.get('processed', 0)}")
+            console.print(f"  Errors: {result.get('errors', 0)}")
 
     run_async(_index())
 
@@ -182,48 +221,44 @@ def serve(
 
 @app.command()
 def mcp(
-    mode: str = typer.Option("local", "--mode", "-m", help="Operating mode: local, cloud, hybrid"),
-    transport: str = typer.Option("stdio", "--transport", "-t", help="Transport protocol: stdio, http, sse"),
-    api_key: Optional[str] = typer.Option(None, "--api-key", "-k", help="DocVector Cloud API key"),
-    api_url: Optional[str] = typer.Option(None, "--api-url", help="DocVector Cloud API URL"),
+    transport: str = typer.Option("stdio", "--transport", "-t", help="Transport mode: stdio, http, sse"),
 ):
     """Start the MCP server.
 
     Runs the Model Context Protocol server for AI code editor integration.
-    Supports three modes:
-
-    - local: All data stays on your machine (default, fully private)
-    - cloud: Connect to DocVector Cloud for community Q&A
-    - hybrid: Local docs + cloud Q&A (recommended)
 
     Examples:
-        docvector mcp                              # Local mode, stdio transport
-        docvector mcp --mode hybrid --api-key xxx  # Hybrid mode with cloud
-        docvector mcp --transport http             # HTTP for web clients
+        docvector mcp                    # stdio for Claude Desktop
+        docvector mcp --transport http   # HTTP for web clients
+        docvector mcp --transport sse    # SSE for streaming clients
     """
-    from docvector.mcp.server import mcp as mcp_server, set_mcp_config
+    import sys
 
-    console.print(f"[bold blue]Starting DocVector MCP server[/]")
-    console.print(f"  Mode: {mode}")
-    console.print(f"  Transport: {transport}")
+    from docvector.mcp.server import mcp as mcp_server
 
-    if mode == "local":
-        console.print("  [dim]All data stays on your machine - fully private[/dim]")
-    elif mode == "cloud":
-        console.print("  [dim]Connected to DocVector Cloud for community Q&A[/dim]")
-    elif mode == "hybrid":
-        console.print("  [dim]Local docs + cloud Q&A - best of both worlds[/dim]")
+    # Map transport aliases
+    transport_map = {
+        "http": "streamable-http",
+        "stdio": "stdio",
+        "sse": "sse",
+    }
 
-    if mode in ("cloud", "hybrid") and not api_key:
-        console.print("  [yellow]Warning: No API key provided - cloud features limited[/yellow]")
+    effective_transport = transport_map.get(transport, transport)
 
-    console.print()
+    # Only print status for non-stdio transports (stdio uses stdout for protocol)
+    if transport != "stdio":
+        console.print(f"[bold blue]Starting DocVector MCP server[/]")
+        console.print(f"  Transport: {effective_transport}")
 
-    # Configure MCP mode
-    set_mcp_config(mode=mode, api_url=api_url, api_key=api_key)
+        if transport == "http":
+            console.print("  Mode: HTTP (streamable)\n")
+        elif transport == "sse":
+            console.print("  Mode: SSE (server-sent events)\n")
+    else:
+        # For stdio, log to stderr so it doesn't interfere with the protocol
+        print("Starting DocVector MCP server (stdio)", file=sys.stderr)
 
-    # Run the server
-    mcp_server.run(transport=transport if transport != "http" else "streamable-http")
+    mcp_server.run(transport=effective_transport)
 
 
 # =============================================================================
@@ -354,6 +389,179 @@ def list_sources(
             console.print(table)
 
     run_async(_list())
+
+
+# =============================================================================
+# MODELS COMMANDS
+# =============================================================================
+
+models_app = typer.Typer(help="Manage embedding models")
+app.add_typer(models_app, name="models")
+
+
+@models_app.command("list")
+def list_models_cmd(
+    provider: Optional[str] = typer.Option(
+        None, "--provider", "-p", help="Filter by provider (sentence-transformers, openai)"
+    ),
+    speed: Optional[str] = typer.Option(
+        None, "--speed", "-s", help="Filter by speed (fast, medium, slow)"
+    ),
+):
+    """List available embedding models.
+
+    Shows all supported embedding models grouped by speed category.
+
+    Examples:
+        docvector models list
+        docvector models list --provider openai
+        docvector models list --speed fast
+    """
+    from docvector.embeddings import (
+        DEFAULT_MODEL,
+        EMBEDDING_MODELS,
+        ModelSpeed,
+    )
+
+    # Group models by speed
+    speed_groups = {
+        ModelSpeed.FAST: [],
+        ModelSpeed.MEDIUM: [],
+        ModelSpeed.SLOW: [],
+    }
+
+    for name, info in EMBEDDING_MODELS.items():
+        if provider and info.provider != provider:
+            continue
+        if speed and info.speed.value != speed:
+            continue
+        speed_groups[info.speed].append((name, info))
+
+    console.print("\n[bold]Available Embedding Models[/]\n")
+
+    speed_labels = {
+        ModelSpeed.FAST: ("FAST MODELS (< 100ms)", "green"),
+        ModelSpeed.MEDIUM: ("MEDIUM MODELS (100-500ms)", "yellow"),
+        ModelSpeed.SLOW: ("SLOW MODELS (> 500ms)", "red"),
+    }
+
+    total_shown = 0
+    for speed_cat in [ModelSpeed.FAST, ModelSpeed.MEDIUM, ModelSpeed.SLOW]:
+        models = speed_groups[speed_cat]
+        if not models:
+            continue
+
+        label, color = speed_labels[speed_cat]
+        console.print(f"[bold {color}]{label}[/bold {color}]")
+        console.print("─" * len(label))
+
+        for name, info in models:
+            default_tag = " [yellow][DEFAULT][/yellow]" if name == DEFAULT_MODEL else ""
+            console.print(f"  [green]{name}[/green]{default_tag}")
+            console.print(
+                f"    Dimension: {info.dimension} │ Memory: {info.memory_mb}MB │ Quality: {info.quality.value}"
+            )
+            console.print(f"    [dim]{info.description}[/dim]")
+            console.print()
+            total_shown += 1
+
+    if total_shown == 0:
+        console.print("[yellow]No models match the specified filters.[/]")
+    else:
+        console.print(
+            "[dim]Use 'docvector models info <model>' for detailed information.[/dim]"
+        )
+
+
+@models_app.command("info")
+def model_info_cmd(
+    model_name: str = typer.Argument(..., help="Model name to show info for"),
+):
+    """Show detailed information about a model.
+
+    Displays all metadata for a specific embedding model.
+
+    Examples:
+        docvector models info sentence-transformers/all-MiniLM-L6-v2
+        docvector models info BAAI/bge-base-en-v1.5
+    """
+    from docvector.embeddings import get_model_info
+
+    info = get_model_info(model_name)
+
+    if not info:
+        console.print(f"[red]Model '{model_name}' not found in registry.[/red]")
+        console.print(
+            "[dim]Use 'docvector models list' to see available models.[/dim]"
+        )
+        raise typer.Exit(1)
+
+    console.print(f"\n[bold]Model: {model_name}[/bold]")
+    console.print("=" * (len(model_name) + 7))
+
+    table = Table(show_header=False, box=None, padding=(0, 2))
+    table.add_column("Key", style="cyan")
+    table.add_column("Value")
+
+    table.add_row("Provider", info.provider)
+    table.add_row("Dimension", str(info.dimension))
+    table.add_row("Speed", info.speed.value)
+    table.add_row("Quality", info.quality.value)
+    table.add_row("Memory", f"~{info.memory_mb} MB")
+    table.add_row("Max Tokens", str(info.max_tokens))
+
+    console.print(table)
+
+    console.print(f"\n[bold]Description:[/bold]")
+    console.print(f"  {info.description}")
+
+    console.print(f"\n[bold]Recommended For:[/bold]")
+    for use_case in info.use_cases:
+        console.print(f"  • {use_case}")
+
+    console.print(f"\n[bold]Configuration:[/bold]")
+    console.print(f"  export DOCVECTOR_EMBEDDING_MODEL={model_name}")
+    console.print()
+
+
+@models_app.command("recommend")
+def recommend_model_cmd(
+    use_case: str = typer.Option(
+        "general",
+        "--use-case",
+        "-u",
+        help="Use case: general, technical, code, documentation, production, high-precision",
+    ),
+):
+    """Get a model recommendation for your use case.
+
+    Suggests the best model based on your specific needs.
+
+    Examples:
+        docvector models recommend
+        docvector models recommend --use-case technical
+        docvector models recommend --use-case code
+    """
+    from docvector.embeddings import get_model_info, get_recommended_model
+
+    model_name = get_recommended_model(use_case)
+    info = get_model_info(model_name)
+
+    console.print(f"\n[bold]Recommended Model for '{use_case}' Use Case[/bold]")
+    console.print("=" * 45)
+
+    console.print(f"\n  [bold green]Model: {model_name}[/bold green]")
+
+    if info:
+        console.print(f"\n  [bold]Why this model:[/bold]")
+        console.print(f"    • Quality: {info.quality.value}")
+        console.print(f"    • Speed: {info.speed.value}")
+        console.print(f"    • Memory: ~{info.memory_mb}MB")
+        console.print(f"    • {info.description}")
+
+    console.print(f"\n  [bold]To use this model:[/bold]")
+    console.print(f"    export DOCVECTOR_EMBEDDING_MODEL={model_name}")
+    console.print()
 
 
 # =============================================================================
