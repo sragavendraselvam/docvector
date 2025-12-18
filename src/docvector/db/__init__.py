@@ -24,15 +24,22 @@ def get_engine() -> AsyncEngine:
     global _engine
 
     if _engine is None:
+        # Use effective_database_url which respects local/cloud mode
+        database_url = settings.effective_database_url
+
+        # Ensure local directories exist if in local mode
+        if settings.is_local_mode:
+            settings.ensure_local_directories()
+
         # Check if using SQLite
-        is_sqlite = settings.database_url.startswith("sqlite")
+        is_sqlite = database_url.startswith("sqlite")
         
         if is_sqlite:
             # Parse path from URL (sqlite+aiosqlite:///path/to/db)
             # Basic parsing, might need to be more robust
             try:
                 import os
-                path_part = settings.database_url.split(":///")[-1]
+                path_part = database_url.split(":///")[-1]
                 db_dir = os.path.dirname(path_part)
                 if db_dir:
                     os.makedirs(db_dir, exist_ok=True)
@@ -54,13 +61,13 @@ def get_engine() -> AsyncEngine:
             }
             
         _engine = create_async_engine(
-            settings.database_url,
+            database_url,
             echo=settings.environment == "development",
             connect_args=connect_args,
             pool_pre_ping=True,
             **kwargs
         )
-        logger.info("Database engine created", url=settings.database_url)
+        logger.info("Database engine created", url=database_url)
 
     return _engine
 
@@ -103,3 +110,17 @@ async def close_db() -> None:
 
 # Alias for backwards compatibility
 get_db_session = get_session
+
+
+async def create_tables() -> None:
+    """
+    Create all database tables.
+
+    This should be called once to initialize the database schema.
+    """
+    from docvector.models import Base
+
+    engine = get_engine()
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    logger.info("Database tables created")

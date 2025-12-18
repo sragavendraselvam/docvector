@@ -56,7 +56,17 @@
       "Bash(gh pr view:*)",
       "WebFetch(domain:github.com)",
       "Bash(python -m py_compile:*)",
-      "Bash(python3 -m py_compile:*)"
+      "Bash(python3 -m py_compile:*)",
+      "Bash(python3 -m pip install:*)",
+      "Bash(source:*)",
+      "Bash(docvector --help:*)",
+      "Bash(.venv/bin/python -m pip install:*)",
+      "Bash(.venv/bin/python:*)",
+      "Bash(cat:*)",
+      "Bash(export DOCVECTOR_DOCVECTOR_MODE=local)",
+      "Bash(export DOCVECTOR_LOCAL_DATA_DIR=./docvector_data)",
+      "Bash(.venv/bin/playwright install:*)",
+      "Bash(find:*)"
     ]
   }
 }

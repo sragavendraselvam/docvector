@@ -18,7 +18,103 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import ARRAY as PG_ARRAY, JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import DeclarativeBase, relationship
-from sqlalchemy.types import JSON, TypeDecorator
+from sqlalchemy.types import JSON, TypeDecorator, CHAR
+from sqlalchemy.engine import Dialect
+import json
+
+
+# =============================================================================
+# DATABASE-AGNOSTIC TYPE ADAPTERS
+# =============================================================================
+
+class GUID(TypeDecorator):
+    """Platform-agnostic GUID type.
+
+    Uses PostgreSQL's UUID type when available, otherwise stores as CHAR(36).
+    """
+    impl = CHAR(36)
+    cache_ok = True
+
+    def load_dialect_impl(self, dialect: Dialect):
+        if dialect.name == "postgresql":
+            return dialect.type_descriptor(GUID())
+        else:
+            return dialect.type_descriptor(CHAR(36))
+
+    def process_bind_param(self, value, dialect: Dialect):
+        if value is None:
+            return value
+        elif dialect.name == "postgresql":
+            return value
+        else:
+            return str(value)
+
+    def process_result_value(self, value, dialect: Dialect):
+        if value is None:
+            return value
+        elif dialect.name == "postgresql":
+            return value
+        else:
+            from uuid import UUID
+            return UUID(value) if isinstance(value, str) else value
+
+
+class JSONArray(TypeDecorator):
+    """Platform-agnostic ARRAY type.
+
+    Uses PostgreSQL's ARRAY type when available, otherwise stores as JSON.
+    """
+    impl = Text
+    cache_ok = True
+
+    def load_dialect_impl(self, dialect: Dialect):
+        if dialect.name == "postgresql":
+            return dialect.type_descriptor(JSONArray())
+        else:
+            return dialect.type_descriptor(Text)
+
+    def process_bind_param(self, value, dialect: Dialect):
+        if value is None:
+            return "[]" if dialect.name != "postgresql" else None
+        if dialect.name == "postgresql":
+            return value
+        return json.dumps(value)
+
+    def process_result_value(self, value, dialect: Dialect):
+        if value is None:
+            return []
+        if dialect.name == "postgresql":
+            return value
+        return json.loads(value) if isinstance(value, str) else value
+
+
+class JSONBCompat(TypeDecorator):
+    """Platform-agnostic JSONB type.
+
+    Uses PostgreSQL's JSONB type when available, otherwise uses JSON.
+    """
+    impl = Text
+    cache_ok = True
+
+    def load_dialect_impl(self, dialect: Dialect):
+        if dialect.name == "postgresql":
+            return dialect.type_descriptor(JSONB)
+        else:
+            return dialect.type_descriptor(Text)
+
+    def process_bind_param(self, value, dialect: Dialect):
+        if value is None:
+            return "{}" if dialect.name != "postgresql" else None
+        if dialect.name == "postgresql":
+            return value
+        return json.dumps(value)
+
+    def process_result_value(self, value, dialect: Dialect):
+        if value is None:
+            return {}
+        if dialect.name == "postgresql":
+            return value
+        return json.loads(value) if isinstance(value, str) else value
 
 
 class Base(DeclarativeBase):
@@ -32,14 +128,14 @@ class Library(Base):
 
     __tablename__ = "libraries"
 
-    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    id = Column(GUID(), primary_key=True, default=uuid4)
     library_id = Column(String(255), nullable=False, unique=True)  # e.g., "mongodb/docs", "vercel/next.js"
     name = Column(String(255), nullable=False)  # Human-readable name
     description = Column(Text, nullable=True)
     homepage_url = Column(String(2048), nullable=True)
     repository_url = Column(String(2048), nullable=True)
-    aliases = Column(PG_ARRAY(String), nullable=False, server_default="{}")  # Alternative names
-    metadata_ = Column("metadata", JSONB, nullable=False, server_default="{}")
+    aliases = Column(JSONArray(), nullable=False, server_default="{}")  # Alternative names
+    metadata_ = Column("metadata", JSONBCompat(), nullable=False, server_default="{}")
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
@@ -55,14 +151,14 @@ class Source(Base):
 
     __tablename__ = "sources"
 
-    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    id = Column(GUID(), primary_key=True, default=uuid4)
     name = Column(String(255), nullable=False, unique=True)
     type = Column(String(50), nullable=False)
     library_id = Column(
-        PG_UUID(as_uuid=True), ForeignKey("libraries.id", ondelete="SET NULL"), nullable=True
+        GUID(), ForeignKey("libraries.id", ondelete="SET NULL"), nullable=True
     )
     version = Column(String(50), nullable=True)  # Library version (e.g., "3.11", "18.2.0")
-    config = Column(JSONB, nullable=False, server_default="{}")
+    config = Column(JSONBCompat(), nullable=False, server_default="{}")
     status = Column(String(50), nullable=False, server_default="active")
     sync_frequency = Column(String(50), nullable=True)
     last_synced_at = Column(DateTime(timezone=True), nullable=True)
@@ -83,9 +179,9 @@ class Document(Base):
 
     __tablename__ = "documents"
 
-    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    id = Column(GUID(), primary_key=True, default=uuid4)
     source_id = Column(
-        PG_UUID(as_uuid=True), ForeignKey("sources.id", ondelete="CASCADE"), nullable=False
+        GUID(), ForeignKey("sources.id", ondelete="CASCADE"), nullable=False
     )
     url = Column(String(2048), nullable=True)
     path = Column(String(1024), nullable=True)
@@ -93,7 +189,7 @@ class Document(Base):
     title = Column(String(512), nullable=True)
     content = Column(Text, nullable=True)
     content_length = Column(Integer, nullable=True)
-    metadata_ = Column("metadata", JSONB, nullable=False, server_default="{}")
+    metadata_ = Column("metadata", JSONBCompat(), nullable=False, server_default="{}")
     language = Column(String(10), nullable=False, server_default="en")
     format = Column(String(50), nullable=True)
     status = Column(String(50), nullable=False, server_default="pending")
@@ -121,9 +217,9 @@ class Chunk(Base):
 
     __tablename__ = "chunks"
 
-    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    id = Column(GUID(), primary_key=True, default=uuid4)
     document_id = Column(
-        PG_UUID(as_uuid=True), ForeignKey("documents.id", ondelete="CASCADE"), nullable=False
+        GUID(), ForeignKey("documents.id", ondelete="CASCADE"), nullable=False
     )
     index = Column(Integer, nullable=False)
     content = Column(Text, nullable=False)
@@ -134,7 +230,7 @@ class Chunk(Base):
     # Context7-style features
     is_code_snippet = Column(Integer, nullable=False, server_default="0")  # Boolean (0/1)
     code_language = Column(String(50), nullable=True)  # Programming language
-    topics = Column(PG_ARRAY(String), nullable=False, server_default="{}")  # Topic tags
+    topics = Column(JSONArray(), nullable=False, server_default="{}")  # Topic tags
     enrichment = Column(Text, nullable=True)  # LLM-generated explanation
 
     # Quality scores (0-1 range)
@@ -144,7 +240,7 @@ class Chunk(Base):
     metadata_score = Column(Float, nullable=True)  # Metadata richness
     initialization_score = Column(Float, nullable=True)  # Initialization guidance
 
-    metadata_ = Column("metadata", JSONB, nullable=False, server_default="{}")
+    metadata_ = Column("metadata", JSONBCompat(), nullable=False, server_default="{}")
     embedding_id = Column(String(255), nullable=True)
     embedding_model = Column(String(255), nullable=True)
     embedded_at = Column(DateTime(timezone=True), nullable=True)
@@ -164,13 +260,13 @@ question_tags = Table(
     Base.metadata,
     Column(
         "question_id",
-        PG_UUID(as_uuid=True),
+        GUID(),
         ForeignKey("questions.id", ondelete="CASCADE"),
         primary_key=True,
     ),
     Column(
         "tag_id",
-        PG_UUID(as_uuid=True),
+        GUID(),
         ForeignKey("tags.id", ondelete="CASCADE"),
         primary_key=True,
     ),
@@ -181,13 +277,13 @@ issue_tags = Table(
     Base.metadata,
     Column(
         "issue_id",
-        PG_UUID(as_uuid=True),
+        GUID(),
         ForeignKey("issues.id", ondelete="CASCADE"),
         primary_key=True,
     ),
     Column(
         "tag_id",
-        PG_UUID(as_uuid=True),
+        GUID(),
         ForeignKey("tags.id", ondelete="CASCADE"),
         primary_key=True,
     ),
@@ -199,7 +295,7 @@ class Tag(Base):
 
     __tablename__ = "tags"
 
-    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    id = Column(GUID(), primary_key=True, default=uuid4)
     name = Column(String(100), nullable=False, unique=True)
     description = Column(Text, nullable=True)
     category = Column(String(50), nullable=True)  # framework, language, topic, etc.
@@ -219,7 +315,7 @@ class Question(Base):
 
     __tablename__ = "questions"
 
-    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    id = Column(GUID(), primary_key=True, default=uuid4)
     title = Column(String(500), nullable=False)
     body = Column(Text, nullable=False)
     body_html = Column(Text, nullable=True)  # Rendered markdown
@@ -231,7 +327,7 @@ class Question(Base):
 
     # Library association
     library_id = Column(
-        PG_UUID(as_uuid=True),
+        GUID(),
         ForeignKey("libraries.id", ondelete="SET NULL"),
         nullable=True,
     )
@@ -248,13 +344,13 @@ class Question(Base):
     vote_score = Column(Integer, nullable=False, server_default="0")
     view_count = Column(Integer, nullable=False, server_default="0")
     answer_count = Column(Integer, nullable=False, server_default="0")
-    accepted_answer_id = Column(PG_UUID(as_uuid=True), nullable=True)
+    accepted_answer_id = Column(GUID(), nullable=True)
 
     # Embedding for semantic search
     embedding_id = Column(String(255), nullable=True)
 
     # Metadata
-    metadata_ = Column("metadata", JSONB, nullable=False, server_default="{}")
+    metadata_ = Column("metadata", JSONBCompat(), nullable=False, server_default="{}")
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     answered_at = Column(DateTime(timezone=True), nullable=True)
@@ -279,15 +375,15 @@ class Answer(Base):
 
     __tablename__ = "answers"
 
-    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    id = Column(GUID(), primary_key=True, default=uuid4)
     question_id = Column(
-        PG_UUID(as_uuid=True),
+        GUID(),
         ForeignKey("questions.id", ondelete="CASCADE"),
         nullable=False,
     )
     body = Column(Text, nullable=False)
     body_html = Column(Text, nullable=True)
-    code_snippets = Column(JSONB, nullable=True, server_default="[]")  # Extracted code blocks
+    code_snippets = Column(JSONBCompat(), nullable=True, server_default="[]")  # Extracted code blocks
 
     # External source tracking
     source = Column(String(50), nullable=False, server_default="internal")
@@ -305,14 +401,14 @@ class Answer(Base):
 
     # Code validation (for AI-submitted answers)
     validation_status = Column(String(50), nullable=True)  # pending, validated, failed
-    validation_details = Column(JSONB, nullable=True)
-    verification_proof = Column(JSONB, nullable=True)  # How it was verified
+    validation_details = Column(JSONBCompat(), nullable=True)
+    verification_proof = Column(JSONBCompat(), nullable=True)  # How it was verified
 
     # Embedding for semantic search
     embedding_id = Column(String(255), nullable=True)
 
     # Metadata
-    metadata_ = Column("metadata", JSONB, nullable=False, server_default="{}")
+    metadata_ = Column("metadata", JSONBCompat(), nullable=False, server_default="{}")
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
@@ -329,21 +425,21 @@ class Comment(Base):
 
     __tablename__ = "comments"
 
-    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    id = Column(GUID(), primary_key=True, default=uuid4)
 
     # Parent (can be question, answer, or another comment)
     question_id = Column(
-        PG_UUID(as_uuid=True),
+        GUID(),
         ForeignKey("questions.id", ondelete="CASCADE"),
         nullable=True,
     )
     answer_id = Column(
-        PG_UUID(as_uuid=True),
+        GUID(),
         ForeignKey("answers.id", ondelete="CASCADE"),
         nullable=True,
     )
     parent_comment_id = Column(
-        PG_UUID(as_uuid=True),
+        GUID(),
         ForeignKey("comments.id", ondelete="CASCADE"),
         nullable=True,
     )
@@ -379,14 +475,14 @@ class Issue(Base):
 
     __tablename__ = "issues"
 
-    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    id = Column(GUID(), primary_key=True, default=uuid4)
     title = Column(String(500), nullable=False)
     description = Column(Text, nullable=False)
     description_html = Column(Text, nullable=True)
 
     # Library association
     library_id = Column(
-        PG_UUID(as_uuid=True),
+        GUID(),
         ForeignKey("libraries.id", ondelete="SET NULL"),
         nullable=True,
     )
@@ -400,7 +496,7 @@ class Issue(Base):
     error_message = Column(Text, nullable=True)
 
     # Environment info
-    environment = Column(JSONB, nullable=True)  # OS, runtime, dependencies
+    environment = Column(JSONBCompat(), nullable=True)  # OS, runtime, dependencies
 
     # Author info
     author_id = Column(String(255), nullable=False)
@@ -412,7 +508,7 @@ class Issue(Base):
     vote_score = Column(Integer, nullable=False, server_default="0")
     view_count = Column(Integer, nullable=False, server_default="0")
     solution_count = Column(Integer, nullable=False, server_default="0")
-    accepted_solution_id = Column(PG_UUID(as_uuid=True), nullable=True)
+    accepted_solution_id = Column(GUID(), nullable=True)
 
     # Reproducibility validation
     is_reproducible = Column(Boolean, nullable=True)
@@ -426,7 +522,7 @@ class Issue(Base):
     external_id = Column(String(255), nullable=True)
 
     # Metadata
-    metadata_ = Column("metadata", JSONB, nullable=False, server_default="{}")
+    metadata_ = Column("metadata", JSONBCompat(), nullable=False, server_default="{}")
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
@@ -444,9 +540,9 @@ class Solution(Base):
 
     __tablename__ = "solutions"
 
-    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    id = Column(GUID(), primary_key=True, default=uuid4)
     issue_id = Column(
-        PG_UUID(as_uuid=True),
+        GUID(),
         ForeignKey("issues.id", ondelete="CASCADE"),
         nullable=False,
     )
@@ -464,7 +560,7 @@ class Solution(Base):
 
     # Validation (did this actually fix the issue?)
     validation_status = Column(String(50), nullable=True)  # pending, validated, failed
-    validation_details = Column(JSONB, nullable=True)
+    validation_details = Column(JSONBCompat(), nullable=True)
     works_count = Column(Integer, nullable=False, server_default="0")  # "This worked for me"
     doesnt_work_count = Column(Integer, nullable=False, server_default="0")
 
@@ -472,7 +568,7 @@ class Solution(Base):
     embedding_id = Column(String(255), nullable=True)
 
     # Metadata
-    metadata_ = Column("metadata", JSONB, nullable=False, server_default="{}")
+    metadata_ = Column("metadata", JSONBCompat(), nullable=False, server_default="{}")
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
@@ -491,11 +587,11 @@ class Vote(Base):
         UniqueConstraint("voter_id", "target_type", "target_id", name="uq_votes_voter_target"),
     )
 
-    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    id = Column(GUID(), primary_key=True, default=uuid4)
 
     # What is being voted on (polymorphic)
     target_type = Column(String(50), nullable=False)  # question, answer, issue, solution, comment
-    target_id = Column(PG_UUID(as_uuid=True), nullable=False)
+    target_id = Column(GUID(), nullable=False)
 
     # Who voted
     voter_id = Column(String(255), nullable=False)
@@ -520,7 +616,7 @@ class ProofOfWorkChallenge(Base):
 
     __tablename__ = "pow_challenges"
 
-    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    id = Column(GUID(), primary_key=True, default=uuid4)
     challenge = Column(String(255), nullable=False, unique=True)
     action = Column(String(50), nullable=False)  # question, answer, comment, vote
     target_id = Column(String(255), nullable=True)  # Optional target ID

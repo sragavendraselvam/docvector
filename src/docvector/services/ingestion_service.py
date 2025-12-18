@@ -12,7 +12,7 @@ from docvector.ingestion import Crawl4AICrawler
 from docvector.models import Chunk, Document, Source
 from docvector.processing import ProcessingPipeline
 from docvector.utils import compute_text_hash
-from docvector.vectordb import QdrantVectorDB
+from docvector.vectordb import get_vector_db, IVectorStore, VectorRecord
 
 logger = get_logger(__name__)
 
@@ -39,7 +39,7 @@ class IngestionService:
         self.pipeline: Optional[ProcessingPipeline] = None
         self.embedder: Optional[BaseEmbedder] = None
         self.embedding_cache: Optional[EmbeddingCache] = None
-        self.vectordb: Optional[QdrantVectorDB] = None
+        self.vectordb: Optional[IVectorStore] = None
 
     async def initialize(self) -> None:
         """Initialize components."""
@@ -67,17 +67,18 @@ class IngestionService:
             self.embedding_cache = EmbeddingCache()
             await self.embedding_cache.initialize()
 
-        # Initialize vector DB
-        self.vectordb = QdrantVectorDB()
+        # Initialize vector DB (uses factory to select based on mode)
+        self.vectordb = get_vector_db()
         await self.vectordb.initialize()
 
         # Ensure collection exists
-        collection_exists = await self.vectordb.collection_exists(settings.qdrant_collection)
+        collection_name = settings.vector_collection
+        collection_exists = await self.vectordb.collection_exists(collection_name)
         if not collection_exists:
-            logger.info("Creating Qdrant collection", collection=settings.qdrant_collection)
+            logger.info("Creating vector collection", collection=collection_name)
             await self.vectordb.create_collection(
-                collection_name=settings.qdrant_collection,
-                vector_size=self.embedder.get_dimension(),
+                name=collection_name,
+                dimension=self.embedder.get_dimension(),
             )
 
         logger.info("Ingestion service initialized")
@@ -394,11 +395,14 @@ class IngestionService:
                     code="SERVICE_NOT_INITIALIZED",
                     message="Vector DB not initialized",
                 )
+            # Create VectorRecord objects for the new interface
+            records = [
+                VectorRecord(id=vid, vector=vec, payload=payload)
+                for vid, vec, payload in zip(vector_ids, vectors, payloads)
+            ]
             await self.vectordb.upsert(
-                collection_name=settings.qdrant_collection,
-                ids=vector_ids,
-                vectors=vectors,
-                payloads=payloads,
+                collection=settings.vector_collection,
+                records=records,
             )
 
             logger.debug(

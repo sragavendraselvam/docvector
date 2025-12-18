@@ -128,7 +128,7 @@ def index(
     async def _index():
         from urllib.parse import urlparse
 
-        from docvector.db import get_db_session
+        from docvector.db import create_tables, get_db_session
         from docvector.models import Library, Source
         from docvector.services.ingestion_service import IngestionService
 
@@ -136,6 +136,9 @@ def index(
         console.print(f"  Max depth: {max_depth}, Max pages: {max_pages}")
         if library_id:
             console.print(f"  Library: {library_id}")
+
+        # Ensure tables exist
+        await create_tables()
 
         async with get_db_session() as db:
             # Create or get library if specified

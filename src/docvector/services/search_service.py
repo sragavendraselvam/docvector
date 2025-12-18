@@ -7,7 +7,7 @@ from docvector.embeddings import BaseEmbedder, LocalEmbedder, OpenAIEmbedder
 from docvector.search import HybridSearch, VectorSearch
 from docvector.search.reranker import MultiStageReranker
 from docvector.utils.token_utils import TokenLimiter
-from docvector.vectordb import BaseVectorDB, QdrantVectorDB
+from docvector.vectordb import BaseVectorDB, IVectorStore, get_vector_db
 
 logger = get_logger(__name__)
 
@@ -33,8 +33,8 @@ class SearchService:
 
         logger.info("Initializing search service")
 
-        # Initialize vector database
-        self.vectordb = QdrantVectorDB()
+        # Initialize vector database (uses factory to select based on mode)
+        self.vectordb = get_vector_db()
         await self.vectordb.initialize()
 
         # Initialize embedder
