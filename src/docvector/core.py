@@ -61,10 +61,114 @@ class Settings(BaseSettings):
     api_port: int = Field(default=8000)
     api_reload: bool = Field(default=True)
 
+    # ===========================================
+    # MODE SELECTION
+    # ===========================================
+    docvector_mode: str = Field(
+        default="local",
+        description="Operating mode: 'local' (embedded DBs), 'cloud' (external DBs), or 'hybrid'",
+    )
+
+    # ===========================================
+    # LOCAL DATA DIRECTORY
+    # ===========================================
+    local_data_dir: str = Field(
+        default="./docvector_data",
+        description="Directory for local data storage (SQLite, ChromaDB, cache)",
+    )
+
+    # ===========================================
+    # VECTOR COLLECTION
+    # ===========================================
+    vector_collection: str = Field(
+        default="documents",
+        description="Name of the default vector collection",
+    )
+
     @property
     def is_production(self) -> bool:
         """Check if running in production."""
         return self.environment == "production"
+
+    @property
+    def is_local_mode(self) -> bool:
+        """Check if running in local mode (embedded databases)."""
+        return self.docvector_mode == "local"
+
+    @property
+    def is_cloud_mode(self) -> bool:
+        """Check if running in cloud mode (external databases)."""
+        return self.docvector_mode == "cloud"
+
+    @property
+    def is_hybrid_mode(self) -> bool:
+        """Check if running in hybrid mode."""
+        return self.docvector_mode == "hybrid"
+
+    @property
+    def effective_database_url(self) -> str:
+        """
+        Get the appropriate database URL based on mode.
+
+        In local mode, uses SQLite in the local data directory.
+        In cloud/hybrid mode, uses the configured database_url.
+        """
+        if self.is_local_mode:
+            from pathlib import Path
+
+            db_path = Path(self.local_data_dir) / "db" / "docvector.db"
+            return f"sqlite+aiosqlite:///{db_path}"
+        return self.database_url
+
+    @property
+    def effective_vector_store_type(self) -> str:
+        """Get the vector store type based on mode."""
+        if self.is_local_mode:
+            return "chroma"
+        return "qdrant"
+
+    def ensure_local_directories(self) -> None:
+        """
+        Create local data directories if they don't exist.
+
+        Only operates in local mode.
+        """
+        if not self.is_local_mode:
+            return
+
+        from pathlib import Path
+
+        base = Path(self.local_data_dir)
+        directories = [
+            base / "db",
+            base / "vectors" / "chroma",
+            base / "cache",
+            base / "logs",
+        ]
+
+        for directory in directories:
+            directory.mkdir(parents=True, exist_ok=True)
+
+    def validate_mode(self) -> None:
+        """
+        Validate mode configuration.
+
+        Raises:
+            ValueError: If mode is invalid or required settings are missing
+        """
+        valid_modes = {"local", "cloud", "hybrid"}
+        if self.docvector_mode not in valid_modes:
+            raise ValueError(
+                f"Invalid DOCVECTOR_MODE: '{self.docvector_mode}'. "
+                f"Must be one of: {', '.join(sorted(valid_modes))}"
+            )
+
+        # Cloud mode requires a non-SQLite database URL
+        if self.is_cloud_mode and "sqlite" in self.database_url:
+            raise ValueError(
+                "Cloud mode requires a PostgreSQL database URL. "
+                "Set DOCVECTOR_DATABASE_URL or use local mode."
+            )
 
     # Database
     database_url: str = Field(default="postgresql+asyncpg://localhost/docvector")

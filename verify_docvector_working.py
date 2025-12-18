@@ -6,7 +6,6 @@ core functionality to ensure production readiness.
 """
 
 import asyncio
-import os
 import sys
 from pathlib import Path
 
@@ -232,7 +231,7 @@ async def test_error_scenarios():
     # Test 1: Invalid mode
     print("\n1. Testing invalid mode...")
     try:
-        db = get_vector_db(mode="invalid_mode")
+        _db = get_vector_db(mode="invalid_mode")
         print("   ✗ Should have raised ValueError")
         return False
     except ValueError as e:

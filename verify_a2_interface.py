@@ -353,8 +353,9 @@ def test_type_hints():
                     hints = get_type_hints(method)
                     if hints:
                         methods_with_hints.append(name)
-                except:
-                    pass
+                except Exception:
+                    # Skip methods where type hints cannot be retrieved
+                    continue
         
         print(f"✓ {len(methods_with_hints)} methods have type hints")
         

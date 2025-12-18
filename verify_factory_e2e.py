@@ -183,7 +183,7 @@ async def test_error_handling():
     # Test invalid mode
     print("\n1. Testing invalid mode...")
     try:
-        db = get_vector_db(mode="invalid")
+        _db = get_vector_db(mode="invalid")
         print("   ✗ Should have raised ValueError")
         assert False
     except ValueError as e:

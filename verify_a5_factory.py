@@ -5,7 +5,6 @@ to ensure it correctly selects implementations and validates configuration.
 """
 
 import sys
-import os
 from pathlib import Path
 
 # Add src to path
@@ -244,17 +243,17 @@ def test_invalid_mode():
         
         # Test invalid mode
         try:
-            db = get_vector_db(mode="invalid_mode")
+            _db = get_vector_db(mode="invalid_mode")
             print("✗ Should have raised ValueError for invalid mode")
             return False
         except ValueError as e:
             assert "Invalid" in str(e) or "invalid" in str(e)
             print(f"✓ Invalid mode raises ValueError")
             print(f"  - Error message: {str(e)[:80]}...")
-        
+
         # Test another invalid mode
         try:
-            db = get_vector_db(mode="production")
+            _db = get_vector_db(mode="production")
             print("✗ Should have raised ValueError for 'production' mode")
             return False
         except ValueError as e:
@@ -284,9 +283,9 @@ def test_missing_chroma_config():
         
         # Set empty directory
         settings.chroma_persist_directory = ""
-        
+
         try:
-            db = get_vector_db(mode="local")
+            _db = get_vector_db(mode="local")
             print("✗ Should have raised VectorDBConfigurationError")
             settings.chroma_persist_directory = original_dir
             return False
@@ -326,9 +325,9 @@ def test_missing_qdrant_config():
         settings.qdrant_url = None
         settings.qdrant_api_key = None
         settings.qdrant_host = ""
-        
+
         try:
-            db = get_vector_db(mode="cloud")
+            _db = get_vector_db(mode="cloud")
             print("✗ Should have raised VectorDBConfigurationError")
             return False
         except VectorDBConfigurationError as e:
@@ -367,22 +366,22 @@ def test_partial_qdrant_config():
         # Set URL without API key
         settings.qdrant_url = "https://test.cloud.qdrant.io"
         settings.qdrant_api_key = None
-        
+
         try:
-            db = get_vector_db(mode="cloud")
+            _db = get_vector_db(mode="cloud")
             print("✗ Should have raised VectorDBConfigurationError for URL without key")
             return False
         except VectorDBConfigurationError as e:
             assert "API key" in str(e) or "missing" in str(e)
             print(f"✓ URL without API key raises VectorDBConfigurationError")
             print(f"  - Error message: {str(e)[:80]}...")
-        
+
         # Set API key without URL
         settings.qdrant_url = None
         settings.qdrant_api_key = "test-key"
-        
+
         try:
-            db = get_vector_db(mode="cloud")
+            _db = get_vector_db(mode="cloud")
             print("✗ Should have raised VectorDBConfigurationError for key without URL")
             return False
         except VectorDBConfigurationError as e:
