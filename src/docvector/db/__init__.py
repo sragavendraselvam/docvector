@@ -24,12 +24,41 @@ def get_engine() -> AsyncEngine:
     global _engine
 
     if _engine is None:
+        # Check if using SQLite
+        is_sqlite = settings.database_url.startswith("sqlite")
+        
+        if is_sqlite:
+            # Parse path from URL (sqlite+aiosqlite:///path/to/db)
+            # Basic parsing, might need to be more robust
+            try:
+                import os
+                path_part = settings.database_url.split(":///")[-1]
+                db_dir = os.path.dirname(path_part)
+                if db_dir:
+                    os.makedirs(db_dir, exist_ok=True)
+            except Exception as e:
+                logger.warning(f"Failed to create SQLite directory: {e}")
+
+        connect_args = {}
+        if is_sqlite:
+            # SQLite specific args
+            connect_args = {"check_same_thread": False}
+        
+        # pooling args
+        kwargs = {}
+        if not is_sqlite:
+            # PostgreSQL/others support pooling
+            kwargs = {
+                "pool_size": 10,
+                "max_overflow": 20,
+            }
+            
         _engine = create_async_engine(
             settings.database_url,
             echo=settings.environment == "development",
+            connect_args=connect_args,
             pool_pre_ping=True,
-            pool_size=10,
-            max_overflow=20,
+            **kwargs
         )
         logger.info("Database engine created", url=settings.database_url)
 

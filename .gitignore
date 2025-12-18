@@ -147,5 +147,10 @@ cython_debug/
 Thumbs.db
 
 *.md
+!epic.md
+!IMPLEMENTATION_VERIFICATION.md
+!A2_VERIFICATION.md
+!A5_VERIFICATION.md
+!EPIC_IMPLEMENTATION_SUMMARY.md
 *.txt
 !README.md

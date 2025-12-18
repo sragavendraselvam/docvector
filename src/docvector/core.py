@@ -177,12 +177,18 @@ class Settings(BaseSettings):
     redis_url: str = Field(default="redis://localhost:6379/0")
     redis_max_connections: int = Field(default=10)
 
-    # Qdrant
+    # Vector Database - ChromaDB (local mode)
+    chroma_persist_directory: str = Field(default="./data/chroma")
+    chroma_collection: str = Field(default="documents")
+
+    # Vector Database - Qdrant (cloud/hybrid mode)
     qdrant_host: str = Field(default="localhost")
     qdrant_port: int = Field(default=6333)
     qdrant_grpc_port: int = Field(default=6334)
     qdrant_use_grpc: bool = Field(default=False)
     qdrant_collection: str = Field(default="documents")
+    qdrant_url: Optional[str] = Field(default=None)  # Cloud URL (e.g., https://xxx.cloud.qdrant.io:6333)
+    qdrant_api_key: Optional[str] = Field(default=None)  # Cloud API key
 
     # Embeddings
     embedding_provider: str = Field(default="local")  # "local" or "openai"
@@ -209,6 +215,29 @@ class Settings(BaseSettings):
     crawler_user_agent: str = Field(
         default="DocVector/0.1.0 (https://github.com/docvector/docvector)"
     )
+
+    # MCP Server Mode
+    # - local: All data stored locally, no cloud connectivity (air-gapped)
+    # - cloud: Connect to DocVector Cloud for community Q&A corpus
+    # - hybrid: Local docs + cloud Q&A (recommended for most users)
+    mcp_mode: str = Field(default="local")  # "local", "cloud", or "hybrid"
+    cloud_api_url: Optional[str] = Field(default=None)  # DocVector Cloud API URL
+    cloud_api_key: Optional[str] = Field(default=None)  # DocVector Cloud API key
+
+    # Paddle Billing
+    # Paddle is a merchant of record that handles global payments, tax, and compliance
+    paddle_environment: str = Field(default="sandbox")  # "sandbox" or "production"
+    paddle_api_key: Optional[str] = Field(default=None)  # Paddle API key
+    paddle_client_token: Optional[str] = Field(default=None)  # Paddle client-side token
+    paddle_webhook_secret: Optional[str] = Field(default=None)  # Webhook signature verification
+
+    # Paddle Price IDs (set these in env vars)
+    paddle_price_starter_monthly: Optional[str] = Field(default=None)
+    paddle_price_starter_yearly: Optional[str] = Field(default=None)
+    paddle_price_pro_monthly: Optional[str] = Field(default=None)
+    paddle_price_pro_yearly: Optional[str] = Field(default=None)
+    paddle_price_enterprise_monthly: Optional[str] = Field(default=None)
+    paddle_price_enterprise_yearly: Optional[str] = Field(default=None)
 
 
 # Global settings instance
